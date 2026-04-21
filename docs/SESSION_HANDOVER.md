@@ -4,66 +4,79 @@
 
 ---
 
-## Current state — 2026-04-21 (pre-public-release hygiene pass)
+## Current state — 2026-04-21 (POC → MVP migration)
 
-### What's landed
+### What's landed (as feature branches, not merged to main)
 
-- **Repo is ready to go public.** Audited working tree and **full git history** for credential leakage — clean on API keys, tokens, private keys. No `.env` / `*.tfvars` / `*.tfstate` / service-account JSON ever committed.
-- **Two hygiene items fixed in code.** Hardcoded owner email as Cloud Run invoker → now driven by a new `coder_agent_invoker_members` list variable in [`infra/terraform/variables.tf`](../infra/terraform/variables.tf) (no default, forces explicit set). Billing-account ID baked into example files + docs → placeholders that point at `.env` / `terraform.tfvars` for the real values.
-- **Git history squashed to a single commit.** The billing ID was baked into 4 pre-existing commits, so rather than a surgical `git-filter-repo` we did a full orphan-squash: `main` is now a single `chore: initial commit` (`9dd0308`). The surgical redaction PR (#4) was closed as superseded; remote feature branches deleted; branch protection on `main` restored after the one-time force-push.
-- **Local backup tags kept**: `backup/pre-squash-main`, `backup/pre-squash-chore` point at the old history. Safe to delete with `git tag -d …` once you're confident nothing broke.
-- **Terraform still validates.** Local gitignored `terraform.tfvars` has `coder_agent_invoker_members` populated, so the next `terraform apply` produces an identical Cloud Run IAM binding — zero behavior change.
+Four PR candidates sit on local branches, reviewed end-to-end by qa-engineer + tech-lead, post-review integration breaks already fixed. **Nothing has been deployed.**
+
+- **`docs/adr-mvp-decisions`** (1 commit) — the MVP decision cluster: [ADR-0010](adr/0010-vllm-as-model-server-runtime.md) vLLM supersedes llama.cpp; [ADR-0011](adr/0011-cloud-run-l4-gpu.md) Cloud Run NVIDIA L4 GPU, scale-to-zero retained, 20–60 s cold start explicitly accepted; [ADR-0012](adr/0012-reintroduce-deepagents.md) re-introduce DeepAgents (supersedes ADR-0009); [ADR-0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) `Qwen/Qwen3-Coder-30B-A3B-Instruct` in AWQ int4 (supersedes ADR-0008). Status + index updates on 0002/0008/0009 and [DECISIONS.md](DECISIONS.md).
+
+- **`feat/vllm-model-server`** (8 commits) — `services/model-server/` rewritten as a vLLM shim on a CUDA base (AWQ-Marlin quantization, baked model weights, argv-rewrite contract tests, `MAX_NUM_SEQS=4` for MVP single-client workload). `infra/terraform/` adds a `cloud_run_gpu` module (L4, `us-central1`) and a second Artifact Registry repo in that region. `scripts/build-and-push.sh` now defaults to Cloud Build for the CUDA image. Updated `smoke-test.sh`, `teardown.sh`, new `setup-billing-alerts.sh` (budget $300/mo, alerts 50/90/100%). Post-review fix: env var names aligned (`SERVED_MODEL_NAME` / `MAX_MODEL_LEN`, not `VLLM_*`) and the value pinned to the full HF id so the agent→server call doesn't 404.
+
+- **`feat/reintroduce-deepagents-clean`** (2 commits) — `services/coder-agent/` migrated to `deepagents==0.5.3` + `langgraph>=1.1`. Plan→analyze→implement→refine as DeepAgents subagents (Shape A per ADR-0012). External FastAPI API unchanged. **35 pytest cases pass** (1 skipped live-model gate). Includes a new ADR-0001 compliance test that asserts `coder_agent.agent` never transitively imports `vllm` / `llama_cpp`. Model-name default now matches vLLM (`Qwen/Qwen3-Coder-30B-A3B-Instruct`).
+
+- **`docs/session-handover-mvp-migration`** (this commit) — SESSION_HANDOVER update.
+
+Two dead branches on disk from a parallel-agent working-tree race: `feat/cloud-run-gpu-l4` (contaminated) and `feat/reintroduce-deepagents` (empty). Safe to `git branch -d` both.
 
 ### What's in-flight / caveats
 
-- **GitHub preserves `refs/pull/{1..4}/head` on origin** pointing at the pre-squash commits (which contained the billing ID). These are *not* visible in `git log` of a clone but are fetchable by anyone who knows the PR number (`git fetch origin refs/pull/1/head`). **Accepted as low risk** — a billing-account ID is an opaque reference, not a credential, and can't be exploited without IAM. To fully purge would require deleting + recreating the GitHub repo; not worth the churn.
-- **Nothing else in-flight.** Flipping repo visibility to public is a single click from the GitHub Settings page.
-
-### Changes made this session (code, infra, docs)
-
-1. [`infra/terraform/variables.tf`](../infra/terraform/variables.tf) — new `coder_agent_invoker_members` list variable (required, no default).
-2. [`infra/terraform/main.tf`](../infra/terraform/main.tf) — Cloud Run invoker IAM binding driven by the variable; stale billing-ID comment genericized.
-3. [`infra/terraform/terraform.tfvars.example`](../infra/terraform/terraform.tfvars.example) — generic placeholders (`your-project-id`, `XXXXXX-XXXXXX-XXXXXX`, `you@example.com`) with inline `gcloud billing accounts list` hint; added `coder_agent_invoker_members` example line.
-4. [`.env.example`](../.env.example) — placeholder billing account + inline hint.
-5. [`docs/RUNBOOK.md`](RUNBOOK.md) — owner / project / billing rows now point at `.env` / `terraform.tfvars`; the diagnostic `gcloud alpha billing accounts get-iam-policy` command reads `$GCP_BILLING_ACCOUNT` from `.env`.
-6. `docs/SESSION_HANDOVER.md` (this file) — 2026-04-19 archive entry redacted of billing ID; fresh 2026-04-21 block.
-7. `infra/terraform/terraform.tfvars` (gitignored, local-only) — `coder_agent_invoker_members = ["user:…"]` added.
-8. **Git history rewrite** — orphan-squash to one root commit; `main` force-pushed; PR #4 closed; `chore/redact-for-public-release`, `deploy/first-cloud-run-deploy`, `feat/strip-deepagents-for-poc` removed from origin (the last two were already auto-deleted on merge).
+- **Nothing deployed, no images pushed.** GCP saw no changes this session. First `terraform apply` will want a real `model_server_image` URI (current placeholder in tfvars: `model-server:v0.2.0-sha-placeholder`).
+- **GPU quota must be requested before apply**: GCP Console → IAM & Admin → Quotas → "Total Nvidia L4 GPU allocation, per project per region" → `us-central1` → at least 1. Default for new projects is 0.
+- **`max_model_len=32768` is a proposal, not a measurement.** ml-engineer must validate on real L4 (ADR-0013). `entrypoint.sh` exposes `MAX_MODEL_LEN` so the operator can drop to 24576 / 16384 without rebuilding if vLLM OOMs on CUDA-graph capture.
+- **Regional split.** coder-agent stays in `europe-west4`; model-server goes to `us-central1` (Cloud Run L4 not in europe-west4 as of 2026-04). ~100–130 ms cross-region RTT per agent→model call — documented in [RUNBOOK](RUNBOOK.md).
+- **Cost envelope jumped.** Budget alert threshold raised from $20 → $300/mo. L4 on Cloud Run ~$0.90/hr warm; 8 active hrs/day ≈ $220/mo.
 
 ### Next actions (in priority order)
 
-1. **Flip repo visibility to public** on GitHub whenever you want. No further pre-flight blocked.
-2. *(Optional)* Write an ADR documenting the history-squash decision — non-trivial per CLAUDE.md §2, currently only captured here. Owner: `doc-keeper`.
-3. *(Carried over)* ADR for the Google ID-token auth wiring (`_GoogleIdTokenAuth`, audience derivation, ADC vs metadata server). Owner: `doc-keeper` + `tech-lead`.
-4. *(Carried over)* Slow integration test against live `/chat` (`@pytest.mark.slow`, env-gated so CI doesn't depend on GCP). Owner: `qa-engineer`.
-5. *(Carried over)* Make `/ready` more forgiving on cold starts (bump 5 s probe timeout to ~15 s, or decouple from full `/health` round-trip). Low priority.
-6. *(Carried over)* Pin image tags instead of digests in `terraform.tfvars` once a SHA-tag convention is settled. Owner: `devops-engineer`.
-7. *(Carried over)* Fix `pythonjsonlogger` deprecation warning: `pythonjsonlogger.jsonlogger` → `pythonjsonlogger.json`. Trivial.
+1. **Review + merge branches in order:**
+   1. `docs/adr-mvp-decisions` (decisions, no risk)
+   2. `feat/vllm-model-server` (container + GPU infra — coupled, must ship together)
+   3. `feat/reintroduce-deepagents-clean` (depends on vLLM model-server being live)
+   4. `docs/session-handover-mvp-migration` (this update)
+2. `git branch -d feat/cloud-run-gpu-l4 feat/reintroduce-deepagents` once you're satisfied the clean branches captured the intent.
+3. **Request L4 quota** in `us-central1`.
+4. **Build + push images:** `./scripts/build-and-push.sh model-server` (Cloud Build default now) then `./scripts/build-and-push.sh coder-agent`. Update `terraform.tfvars` with the resulting digests/tags.
+5. **Deploy:** `./scripts/deploy.sh plan` → review → `./scripts/deploy.sh apply`.
+6. **Smoke test:** `./scripts/smoke-test.sh` — expect 20–60 s first-hit latency.
+7. **Validate `max_model_len`** against real L4 VRAM; if vLLM OOMs, set `MAX_MODEL_LEN=24576` or `16384` via the service env, and note the measurement in ADR-0013.
+
+### Deferred (not blocking MVP)
+
+- **503-during-load contract test** on model-server `/health` (qa-engineer flagged; requires mocking vLLM startup phases).
+- **Sub-agent Bash permissions.** Orchestrator, qa-engineer, and one doc-keeper invocation hit Bash auto-denial in background sub-agents this session — they could `Read/Grep/Glob/Write/Edit` but not run scripts, `git`, `pytest`, `terraform plan`, or `uv`. Static audits worked; test execution did not. Worth a follow-up on permission config so background agents can run verification.
+- `_GoogleIdTokenAuth` auth ADR (carried over).
+- Image-tag pinning convention (carried over).
+- `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
 
 ### Open questions for the next session
 
-- Is the next feature "tools come back" or "multi-turn memory" or "second model (bigger context)"? The answer determines whether DeepAgents returns or we design our own LangGraph.
+- Warmup ping or temporary `min_instances=1` for demos (trades idle-zero for predictable first response)?
+- Does the cross-region split hold once real agent loops (10+ model calls each) are in play, or do we need to co-locate in us-central1?
+- Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
 
-### Known issues / gotchas (carried over)
+### Known issues / gotchas
 
-- `/ready` may return `degraded` on first request after 15+ min idle — model-server cold start exceeds probe timeout. `/chat` self-heals (300 s timeout).
-- `openai` SDK retries twice on 500s; three stacktraces in logs for one request is expected.
-- Deploys used to always touch `model-server` due to a legacy empty `scaling {}` block — the last apply cleaned that up; next plan should be a no-op if no image digest changes.
+- **Sub-agent Bash permissions** — see Deferred above. Plan to tackle next.
+- **Parallel code-writing agents need `isolation: "worktree"`**. This session's initial fan-out (ml + devops + backend concurrent, shared working tree) thrashed `.git/HEAD` and one agent's broad `git add` swept another's uncommitted work into its commit — ~30 min of surgical cleanup required. Memorialized as a feedback memory. Rule: any parallel Agent dispatch where ≥ 2 agents will write code gets `isolation: "worktree"`; read-only reviewers can share the main tree.
+- **`/ready` 5 s probe timeout is now too tight** for vLLM's 60 s cold start. Bump or decouple from a full `/health` round-trip (carried over, now load-bearing).
+- `openai` SDK retries twice on 500 s; expect three stacktraces in logs per failing request.
 
 ### Cost-to-date
 
-- Zero incremental GCP cost this session (no deploys, no registry pushes).
-- **Project still sits at ~$0.10–$0.20/mo at idle.**
+- Zero incremental GCP cost this session. No deploys, no registry pushes.
+- Project still sits at ~$0.10–$0.20/mo at idle. First apply will add a second ~10 GiB AR repo (~$1.50/mo) plus L4-hours once the service handles requests.
 
 ### Hand-off plan
 
-Sub-agent team owns follow-up (see [`.claude/agents/`](../.claude/agents/)):
+Sub-agent team owns follow-up:
 
-1. `doc-keeper` owns the history-squash ADR + the Google-ID-token-auth ADR.
-2. `qa-engineer` owns the slow integration test.
-3. `devops-engineer` on call for tfvars → tagged-image migration and cold-start `/ready` fix.
-4. `ml-engineer` owns bringing tool use back (vLLM / Qwen tool calling, or bespoke LangGraph).
-5. `orchestrator` coordinates when the work spans specialists.
+1. `devops-engineer` — runs the deploy after quota lands; bumps the `/ready` probe timeout; resolves the sub-agent Bash permission config.
+2. `qa-engineer` — 503-during-load contract test; live-model integration test wired into CI behind an env gate.
+3. `ml-engineer` — validates `max_model_len=32768` on real L4; revisits the AWQ repo choice (`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit`) when an official Qwen AWQ ships.
+4. `doc-keeper` — updates ADR-0013 with the measured `max_model_len`; the two carried-over ADRs (history-squash, Google-ID-token auth).
+5. `orchestrator` — coordinates when the deploy hits cross-cutting trouble.
 
 ---
 
@@ -76,6 +89,13 @@ Sub-agent team owns follow-up (see [`.claude/agents/`](../.claude/agents/)):
 ---
 
 ## Archive
+
+### 2026-04-21 — pre-public-release hygiene pass
+
+- Repo audited for credential leakage (working tree + full history) — clean on API keys, tokens, private keys, service-account JSON, tfstate. Billing account ID was baked into 4 pre-existing commits, resolved via a full orphan-squash (`main` became a single `chore: initial commit` `9dd0308`). Branch protection on `main` restored after the one-time force-push.
+- Hardcoded owner email as Cloud Run invoker → `coder_agent_invoker_members` list variable (no default, forces explicit set). Billing-account IDs in example files + docs → placeholders pointing at `.env` / `terraform.tfvars`.
+- Local backup tags `backup/pre-squash-main` / `backup/pre-squash-chore` kept pre-wipe. PR #4 closed as superseded.
+- Accepted residual risk: GitHub preserves `refs/pull/{1..4}/head` on origin pointing at pre-squash commits — only fetchable by knowing the PR number; not a credential, not worth the churn of a full repo re-create to purge.
 
 ### 2026-04-20 — end-to-end POC working
 
