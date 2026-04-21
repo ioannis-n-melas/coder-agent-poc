@@ -1,6 +1,6 @@
 # 0002 — llama.cpp as the POC model server
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0010](0010-vllm-as-model-server-runtime.md)
 - **Date**: 2026-04-19
 - **Authors**: @ioannis-n-melas
 
