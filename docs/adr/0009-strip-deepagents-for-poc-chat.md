@@ -1,6 +1,6 @@
 # 0009 — Strip DeepAgents for the POC chat path
 
-- **Status**: Accepted — partially supersedes [#0003](0003-deepagents-as-agent-framework.md) for the Phase-1 POC only
+- **Status**: Superseded by [ADR-0012](0012-reintroduce-deepagents.md)
 - **Date**: 2026-04-20
 - **Authors**: @ioannis-n-melas
 - **Deciders**: @ioannis-n-melas

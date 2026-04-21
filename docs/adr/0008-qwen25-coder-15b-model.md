@@ -1,6 +1,6 @@
 # 0008 — Qwen2.5-Coder-1.5B-Instruct as POC model
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0013](0013-qwen3-coder-30b-a3b-instruct-model.md)
 - **Date**: 2026-04-19
 - **Authors**: @ioannis-n-melas
 
