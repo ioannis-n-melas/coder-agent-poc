@@ -4,48 +4,43 @@
 
 ---
 
-## Current state — 2026-04-21 (POC → MVP migration)
+## Current state — 2026-04-21 (post-merge + regional pivot)
 
-### What's landed (as feature branches, not merged to main)
+### What's landed
 
-Four PR candidates sit on local branches, reviewed end-to-end by qa-engineer + tech-lead, post-review integration breaks already fixed. **Nothing has been deployed.**
+PRs #6–#10 merged the MVP migration cluster; PR #11 (this) adds a SESSION_HANDOVER refresh **and** the regional pivot (see ADR-0014). All services will run in `europe-west4`. **Nothing deployed to GCP yet.**
 
-- **`docs/adr-mvp-decisions`** (1 commit) — the MVP decision cluster: [ADR-0010](adr/0010-vllm-as-model-server-runtime.md) vLLM supersedes llama.cpp; [ADR-0011](adr/0011-cloud-run-l4-gpu.md) Cloud Run NVIDIA L4 GPU, scale-to-zero retained, 20–60 s cold start explicitly accepted; [ADR-0012](adr/0012-reintroduce-deepagents.md) re-introduce DeepAgents (supersedes ADR-0009); [ADR-0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) `Qwen/Qwen3-Coder-30B-A3B-Instruct` in AWQ int4 (supersedes ADR-0008). Status + index updates on 0002/0008/0009 and [DECISIONS.md](DECISIONS.md).
+| PR | Branch | What it brought in |
+|---|---|---|
+| #6 | `docs/adr-mvp-decisions` | [ADR-0010](adr/0010-vllm-as-model-server-runtime.md) vLLM supersedes llama.cpp; [ADR-0011](adr/0011-cloud-run-l4-gpu.md) Cloud Run L4 GPU; [ADR-0012](adr/0012-reintroduce-deepagents.md) DeepAgents re-introduced; [ADR-0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) Qwen3-Coder-30B AWQ int4. Status updates on ADR-0002/0008/0009 and [DECISIONS.md](DECISIONS.md). |
+| #7 | `chore/subagent-bash-permissions` | Orchestrator, qa-engineer, and doc-keeper background sub-agents can now run `git -C`, `git worktree`, `bash -n`, `shellcheck`. Resolves the "Sub-agent Bash permissions" deferred item from the prior block. |
+| #8 | `feat/vllm-model-server` | `services/model-server/` rewritten as a vLLM shim on a CUDA base (AWQ-Marlin, baked weights, `MAX_NUM_SEQS=4`). `infra/terraform/` adds `cloud_run_gpu` module (L4) + Cloud Build defaults for CUDA image. Updated `smoke-test.sh`, `teardown.sh`, new `setup-billing-alerts.sh` ($300/mo budget). Env vars aligned (`SERVED_MODEL_NAME` / `MAX_MODEL_LEN`). *(Originally shipped with a us-central1 regional split per ADR-0011; superseded by ADR-0014 in this PR.)* |
+| #9 | `feat/reintroduce-deepagents-clean` | `services/coder-agent/` migrated to `deepagents==0.5.3` + `langgraph>=1.1`. Plan→analyze→implement→refine subagent graph (Shape A per ADR-0012). External FastAPI API unchanged. 35 pytest cases pass (1 skipped live-model gate). ADR-0001 compliance test added. |
+| #10 | `docs/session-handover-mvp-migration` | SESSION_HANDOVER update written pre-merge; content was accurate at time of writing, became stale on merge — replaced by this block. |
+| #11 | `docs/session-handover-post-merge` | This block + [ADR-0014](adr/0014-consolidate-model-server-to-europe-west4.md) (L4 now GA in europe-west4 → consolidate `model-server` back to primary region; single AR repo; `var.model_server_region` / `GPU_AR_HOST` / `MODEL_SERVER_REGION` removed; RUNBOOK regional-split section deleted). ADR-0011's regional decision is superseded; its other decisions (L4 SKU, scale-to-zero, cold-start acceptance, GEN2 env, sizing) remain in force. |
 
-- **`feat/vllm-model-server`** (8 commits) — `services/model-server/` rewritten as a vLLM shim on a CUDA base (AWQ-Marlin quantization, baked model weights, argv-rewrite contract tests, `MAX_NUM_SEQS=4` for MVP single-client workload). `infra/terraform/` adds a `cloud_run_gpu` module (L4, `us-central1`) and a second Artifact Registry repo in that region. `scripts/build-and-push.sh` now defaults to Cloud Build for the CUDA image. Updated `smoke-test.sh`, `teardown.sh`, new `setup-billing-alerts.sh` (budget $300/mo, alerts 50/90/100%). Post-review fix: env var names aligned (`SERVED_MODEL_NAME` / `MAX_MODEL_LEN`, not `VLLM_*`) and the value pinned to the full HF id so the agent→server call doesn't 404.
-
-- **`feat/reintroduce-deepagents-clean`** (2 commits) — `services/coder-agent/` migrated to `deepagents==0.5.3` + `langgraph>=1.1`. Plan→analyze→implement→refine as DeepAgents subagents (Shape A per ADR-0012). External FastAPI API unchanged. **35 pytest cases pass** (1 skipped live-model gate). Includes a new ADR-0001 compliance test that asserts `coder_agent.agent` never transitively imports `vllm` / `llama_cpp`. Model-name default now matches vLLM (`Qwen/Qwen3-Coder-30B-A3B-Instruct`).
-
-- **`docs/session-handover-mvp-migration`** (this commit) — SESSION_HANDOVER update.
-
-Two dead branches on disk from a parallel-agent working-tree race: `feat/cloud-run-gpu-l4` (contaminated) and `feat/reintroduce-deepagents` (empty). Safe to `git branch -d` both.
+Dead branches `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` no longer exist locally or on origin. `terraform.tfvars` exists locally (not committed) — **contains stale `us-central1` values**; re-copy from `terraform.tfvars.example` before the next apply.
 
 ### What's in-flight / caveats
 
-- **Nothing deployed, no images pushed.** GCP saw no changes this session. First `terraform apply` will want a real `model_server_image` URI (current placeholder in tfvars: `model-server:v0.2.0-sha-placeholder`).
-- **GPU quota must be requested before apply**: GCP Console → IAM & Admin → Quotas → "Total Nvidia L4 GPU allocation, per project per region" → `us-central1` → at least 1. Default for new projects is 0.
-- **`max_model_len=32768` is a proposal, not a measurement.** ml-engineer must validate on real L4 (ADR-0013). `entrypoint.sh` exposes `MAX_MODEL_LEN` so the operator can drop to 24576 / 16384 without rebuilding if vLLM OOMs on CUDA-graph capture.
-- **Regional split.** coder-agent stays in `europe-west4`; model-server goes to `us-central1` (Cloud Run L4 not in europe-west4 as of 2026-04). ~100–130 ms cross-region RTT per agent→model call — documented in [RUNBOOK](RUNBOOK.md).
-- **Cost envelope jumped.** Budget alert threshold raised from $20 → $300/mo. L4 on Cloud Run ~$0.90/hr warm; 8 active hrs/day ≈ $220/mo.
+- **Nothing deployed, no images pushed.** `terraform.tfvars` holds placeholder image URIs (and stale us-central1 values from before ADR-0014 — overwrite before apply). First `terraform apply` requires real digests in europe-west4 AR.
+- **L4 GPU quota not yet confirmed.** GCP Console → IAM & Admin → Quotas → "Total Nvidia L4 GPU allocation, per project per region" → `europe-west4` → at least 1. Default for new projects is 0. `europe-west4` is GA/self-serve (ADR-0014).
+- **`max_model_len=32768` is a proposal, not a measurement.** Must validate on real L4 (ADR-0013). `entrypoint.sh` exposes `MAX_MODEL_LEN` so the operator can drop to 24576 / 16384 without rebuilding.
+- **Cost envelope.** Budget alert threshold is $300/mo. L4 on Cloud Run ~$0.90/hr warm; 8 active hrs/day ≈ $220/mo.
+- **`/ready` 5 s probe timeout too tight for vLLM's 60 s cold start.** Load-bearing — must be bumped before first deploy.
 
 ### Next actions (in priority order)
 
-1. **Review + merge branches in order:**
-   1. `docs/adr-mvp-decisions` (decisions, no risk)
-   2. `feat/vllm-model-server` (container + GPU infra — coupled, must ship together)
-   3. `feat/reintroduce-deepagents-clean` (depends on vLLM model-server being live)
-   4. `docs/session-handover-mvp-migration` (this update)
-2. `git branch -d feat/cloud-run-gpu-l4 feat/reintroduce-deepagents` once you're satisfied the clean branches captured the intent.
-3. **Request L4 quota** in `us-central1`.
-4. **Build + push images:** `./scripts/build-and-push.sh model-server` (Cloud Build default now) then `./scripts/build-and-push.sh coder-agent`. Update `terraform.tfvars` with the resulting digests/tags.
-5. **Deploy:** `./scripts/deploy.sh plan` → review → `./scripts/deploy.sh apply`.
-6. **Smoke test:** `./scripts/smoke-test.sh` — expect 20–60 s first-hit latency.
-7. **Validate `max_model_len`** against real L4 VRAM; if vLLM OOMs, set `MAX_MODEL_LEN=24576` or `16384` via the service env, and note the measurement in ADR-0013.
+1. **Confirm L4 quota** in `europe-west4` is approved (GCP Console or Cloud Quotas API — `europe-west4` is self-serve per ADR-0014).
+2. **Build + push images:** `./scripts/build-and-push.sh model-server` (Cloud Build) then `./scripts/build-and-push.sh coder-agent`. Both pushes land in the single europe-west4 AR repo. Update `terraform.tfvars` with resulting digests/tags (and overwrite the stale us-central1 values in the local file).
+3. **Bump `/ready` probe timeout** on model-server Cloud Run service before applying (carried from caveats above).
+4. **Deploy:** `./scripts/deploy.sh plan` → review → `./scripts/deploy.sh apply`.
+5. **Smoke test:** `./scripts/smoke-test.sh` — expect 20–60 s first-hit latency.
+6. **Validate `max_model_len`** against real L4 VRAM; if vLLM OOMs, set `MAX_MODEL_LEN=24576` or `16384` via service env and note measurement in ADR-0013.
 
 ### Deferred (not blocking MVP)
 
 - **503-during-load contract test** on model-server `/health` (qa-engineer flagged; requires mocking vLLM startup phases).
-- **Sub-agent Bash permissions.** Orchestrator, qa-engineer, and one doc-keeper invocation hit Bash auto-denial in background sub-agents this session — they could `Read/Grep/Glob/Write/Edit` but not run scripts, `git`, `pytest`, `terraform plan`, or `uv`. Static audits worked; test execution did not. Worth a follow-up on permission config so background agents can run verification.
 - `_GoogleIdTokenAuth` auth ADR (carried over).
 - Image-tag pinning convention (carried over).
 - `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
@@ -53,29 +48,19 @@ Two dead branches on disk from a parallel-agent working-tree race: `feat/cloud-r
 ### Open questions for the next session
 
 - Warmup ping or temporary `min_instances=1` for demos (trades idle-zero for predictable first response)?
-- Does the cross-region split hold once real agent loops (10+ model calls each) are in play, or do we need to co-locate in us-central1?
 - Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
-
-### Known issues / gotchas
-
-- **Sub-agent Bash permissions** — see Deferred above. Plan to tackle next.
-- **Parallel code-writing agents need `isolation: "worktree"`**. This session's initial fan-out (ml + devops + backend concurrent, shared working tree) thrashed `.git/HEAD` and one agent's broad `git add` swept another's uncommitted work into its commit — ~30 min of surgical cleanup required. Memorialized as a feedback memory. Rule: any parallel Agent dispatch where ≥ 2 agents will write code gets `isolation: "worktree"`; read-only reviewers can share the main tree.
-- **`/ready` 5 s probe timeout is now too tight** for vLLM's 60 s cold start. Bump or decouple from a full `/health` round-trip (carried over, now load-bearing).
-- `openai` SDK retries twice on 500 s; expect three stacktraces in logs per failing request.
 
 ### Cost-to-date
 
-- Zero incremental GCP cost this session. No deploys, no registry pushes.
-- Project still sits at ~$0.10–$0.20/mo at idle. First apply will add a second ~10 GiB AR repo (~$1.50/mo) plus L4-hours once the service handles requests.
+- Zero incremental GCP cost. No deploys, no registry pushes.
+- Project at ~$0.10–$0.20/mo idle. First apply adds one ~10 GiB AR repo (~$1.00–1.50/mo) plus L4-hours once the service handles requests.
 
 ### Hand-off plan
 
-Sub-agent team owns follow-up:
-
-1. `devops-engineer` — runs the deploy after quota lands; bumps the `/ready` probe timeout; resolves the sub-agent Bash permission config.
+1. `devops-engineer` — confirm quota, run the deploy, bump `/ready` probe timeout.
 2. `qa-engineer` — 503-during-load contract test; live-model integration test wired into CI behind an env gate.
-3. `ml-engineer` — validates `max_model_len=32768` on real L4; revisits the AWQ repo choice (`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit`) when an official Qwen AWQ ships.
-4. `doc-keeper` — updates ADR-0013 with the measured `max_model_len`; the two carried-over ADRs (history-squash, Google-ID-token auth).
+3. `ml-engineer` — validate `max_model_len=32768` on real L4; revisit AWQ repo choice (`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit`) when an official Qwen AWQ ships.
+4. `doc-keeper` — update ADR-0013 with measured `max_model_len`; write carried-over ADRs (`_GoogleIdTokenAuth`, image-tag pinning).
 5. `orchestrator` — coordinates when the deploy hits cross-cutting trouble.
 
 ---
@@ -89,6 +74,10 @@ Sub-agent team owns follow-up:
 ---
 
 ## Archive
+
+### 2026-04-21 — POC → MVP migration (pre-merge state)
+
+Four PR candidates sat on local branches, reviewed end-to-end by qa-engineer + tech-lead. **Nothing had been deployed.** Branches: `docs/adr-mvp-decisions` (MVP decision cluster: ADR-0010–0013), `feat/vllm-model-server` (8 commits, vLLM shim + GPU infra), `feat/reintroduce-deepagents-clean` (35 pytest cases pass), `docs/session-handover-mvp-migration`. Two dead branches from a parallel-agent working-tree race — `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` — were present but not needed. The worktree race (ml + devops + backend concurrent, shared working tree) required ~30 min of surgical cleanup; memorialized in feedback memory: any parallel Agent dispatch where ≥ 2 agents write code must use `isolation: "worktree"`. Sub-agent Bash permissions deferred as a follow-up item (resolved in PR #7).
 
 ### 2026-04-21 — pre-public-release hygiene pass
 

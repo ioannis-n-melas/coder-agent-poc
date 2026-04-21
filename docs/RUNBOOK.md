@@ -34,20 +34,9 @@ Operational playbook for the POC. Every lifecycle op has a script — this file 
 ./scripts/teardown.sh          # removes Cloud Run services + SAs
 ```
 
-## Regional split (ADR-0011)
+## Regions
 
-Cloud Run GPU (NVIDIA L4) is not available in `europe-west4` as of 2026-04, so the MVP splits services across regions:
-
-| Service       | Region        | Reason |
-|---|---|---|
-| `coder-agent` | `europe-west4` | Co-located with the developer (ADR-0004). |
-| `model-server`| `us-central1`  | Cloud Run L4 GPU availability. |
-
-**Cross-region latency:** every `coder-agent → model-server` HTTP call incurs ~100–130 ms RTT. A typical agentic task issues 5–15 model calls, adding ~1–2 s end-to-end wall time on top of inference. Acceptable for MVP; revisit if agent loops grow longer.
-
-**Cross-region egress cost:** billed at ~$0.01/GiB within GCP. Agent↔model traffic is text-only (~5 KB per request); 1000 requests/day ≈ 5 MB/day ≈ $0.0015/mo. Negligible.
-
-**When to consolidate back:** when Cloud Run GPU lands in `europe-west4`, update [ADR-0011](adr/0011-cloud-run-l4-gpu.md) and collapse `var.model_server_region` into `var.region`.
+Both services run in `europe-west4` per [ADR-0014](adr/0014-consolidate-model-server-to-europe-west4.md) (which superseded ADR-0011's regional split once Cloud Run L4 GPU went GA in europe-west4). Single region → single AR repo → no cross-region egress. If a future GPU SKU isn't available in europe-west4, ADR-0014 lists the triggers to revisit.
 
 ## Cost trap — cold agent + cold model-server
 
@@ -83,9 +72,9 @@ Terraform creates a billing budget that alerts at 50% / 90% / 100% of a configur
 ### What costs money in this MVP
 - **Cloud Run GPU (model-server, L4)** — ~$0.90/hr per instance when warm (ADR-0011). Scale-to-zero means $0 when idle. At 8 active hrs/day × 30 days ≈ $216/mo.
 - **Cloud Run CPU (coder-agent)** — vCPU-seconds while a request is in flight. ~$0.000018/vCPU-s + memory. Scale-to-zero; idle = $0.
-- **Artifact Registry** — $0.10/GiB/month. The vLLM CUDA image is ~10–15 GiB per repo × 2 repos (europe-west4 + us-central1) ≈ $2–3/mo.
+- **Artifact Registry** — $0.10/GiB/month. The vLLM CUDA image is ~10–15 GiB in a single europe-west4 repo ≈ $1.00–1.50/mo.
 - **Cloud Storage** (tfstate bucket) — pennies.
-- **Network egress** — cross-region coder-agent→model-server chatter is text-only, ~$0.0015/mo at 1000 req/day.
+- **Network egress** — both services are co-located in europe-west4 (ADR-0014), so agent↔model traffic stays intra-region (no egress cost).
 - **Budget alerts** fire at 50/90/100% of `var.monthly_budget_usd` (default $300).
 
 ## Debugging
@@ -109,9 +98,9 @@ vLLM warmup on L4 takes ~20–60 s (ADR-0011): CUDA init + AWQ weight paging + g
 - Set `ENFORCE_EAGER=true` to skip CUDA graph capture (trades steady-state throughput for faster cold start).
 
 ### coder-agent can't reach model-server
-Verify IAM binding (note: model-server lives in `us-central1` — see **Regional split** above):
+Verify IAM binding:
 ```bash
-gcloud run services get-iam-policy model-server --region=us-central1 --project=coder-agent-poc-2026
+gcloud run services get-iam-policy model-server --region=europe-west4 --project=coder-agent-poc-2026
 ```
 `coder-agent-sa@coder-agent-poc-2026.iam.gserviceaccount.com` must have `roles/run.invoker`.
 

@@ -2,21 +2,12 @@
 # Most values default sensibly in variables.tf.
 
 project_id         = "your-project-id"
-region             = "europe-west4"   # coder-agent region
+region             = "europe-west4"   # all services + AR (ADR-0014)
 billing_account_id = "XXXXXX-XXXXXX-XXXXXX" # `gcloud billing accounts list`
 
-# ── Regional split (ADR-0011) ─────────────────────────────────────────
-# model-server moves to us-central1 because Cloud Run L4 GPU is not
-# available in europe-west4 as of 2026-04. Override if Cloud Run GPU
-# expands to europe-west4 (see ADR-0011 trigger to revisit).
-model_server_region = "us-central1"
-
 # ── Image URIs ────────────────────────────────────────────────────────
-# Image must be in the SAME Artifact Registry region as the Cloud Run
-# service to avoid cross-region pull latency.
-# model-server → us-central1 registry
-# coder-agent  → europe-west4 registry
-model_server_image = "us-central1-docker.pkg.dev/your-project-id/coder-agent/model-server:v0.2.0-sha-<git-sha>"
+# Both services pull from the europe-west4 Artifact Registry.
+model_server_image = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/model-server:v0.2.0-sha-<git-sha>"
 coder_agent_image  = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/coder-agent:v0.2.0-sha-<git-sha>"
 
 # ── GPU ───────────────────────────────────────────────────────────────

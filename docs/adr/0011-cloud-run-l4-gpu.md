@@ -1,6 +1,6 @@
 # 0011 — Cloud Run with NVIDIA L4 GPU for MVP serving
 
-- **Status**: Accepted
+- **Status**: Accepted — regional decision superseded by [ADR-0014](0014-consolidate-model-server-to-europe-west4.md) on 2026-04-21 (L4 is now GA in europe-west4). L4 SKU, scale-to-zero, cold-start acceptance, GEN2 execution environment, and GPU sizing decisions remain in force.
 - **Date**: 2026-04-21
 - **Authors**: @ioannis-n-melas
 - **Deciders**: @ioannis-n-melas

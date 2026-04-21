@@ -6,7 +6,7 @@
 # GPU QUOTA NOTE:
 #   Before terraform apply will succeed you must request a quota increase:
 #   GCP Console -> IAM & Admin -> Quotas -> filter "Cloud Run" -> find
-#   "Total Nvidia L4 GPU allocation, per project per region" in us-central1
+#   "Total Nvidia L4 GPU allocation, per project per region" in europe-west4
 #   and request at least 1. Default quota is 0 for new projects.
 #   URL: https://console.cloud.google.com/iam-admin/quotas
 ########################################################################
@@ -18,7 +18,7 @@ variable "project_id" {
 
 variable "region" {
   type        = string
-  description = "Cloud Run region. Must be one that supports NVIDIA L4 (e.g. us-central1)."
+  description = "Cloud Run region. Must be one that supports NVIDIA L4 (europe-west4 per ADR-0014)."
 }
 
 variable "service_name" {

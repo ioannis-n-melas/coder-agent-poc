@@ -18,9 +18,10 @@ All non-trivial choices for this project are recorded as ADRs (Architectural Dec
 | [0008](adr/0008-qwen25-coder-15b-model.md) | Superseded by [#0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) | Qwen2.5-Coder-1.5B-Instruct as POC model |
 | [0009](adr/0009-strip-deepagents-for-poc-chat.md) | Superseded by [#0012](adr/0012-reintroduce-deepagents.md) | Strip DeepAgents for the POC chat path |
 | [0010](adr/0010-vllm-as-model-server-runtime.md) | Accepted | vLLM as model server runtime |
-| [0011](adr/0011-cloud-run-l4-gpu.md) | Accepted | Cloud Run with NVIDIA L4 GPU for MVP serving |
+| [0011](adr/0011-cloud-run-l4-gpu.md) | Accepted (regional decision superseded by [#0014](adr/0014-consolidate-model-server-to-europe-west4.md)) | Cloud Run with NVIDIA L4 GPU for MVP serving |
 | [0012](adr/0012-reintroduce-deepagents.md) | Accepted | Re-introduce DeepAgents as agent framework |
 | [0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) | Accepted | Qwen3-Coder-30B-A3B-Instruct as MVP model |
+| [0014](adr/0014-consolidate-model-server-to-europe-west4.md) | Accepted | Consolidate model-server to europe-west4 (supersedes ADR-0011 regional split) |
 
 ## ADR lifecycle
 
