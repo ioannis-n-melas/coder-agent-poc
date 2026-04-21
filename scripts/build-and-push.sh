@@ -40,9 +40,8 @@ set -a; source "$REPO_ROOT/.env" 2>/dev/null || source "$REPO_ROOT/.env.example"
 : "${AR_REPO:?AR_REPO must be set in .env}"
 : "${AR_HOST:?AR_HOST must be set in .env}"
 
-# GPU/model-server images are pushed to the us-central1 registry (ADR-0011).
-# coder-agent stays on the europe-west4 registry.
-GPU_AR_HOST="${GPU_AR_HOST:-us-central1-docker.pkg.dev}"
+# Both services push to the same AR repo (ADR-0014 supersedes ADR-0011
+# regional split — L4 Cloud Run GPU is GA in europe-west4).
 
 GIT_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
 if git -C "$REPO_ROOT" diff --quiet HEAD -- 2>/dev/null; then
@@ -94,7 +93,7 @@ build_push_cloud_build() {
 
   gcloud builds submit \
     --project="${GCP_PROJECT_ID}" \
-    --region="${CLOUD_BUILD_REGION:-us-central1}" \
+    --region="${CLOUD_BUILD_REGION:-europe-west4}" \
     --tag="${image_uri}:${version}" \
     --tag="${image_uri}:sha-${GIT_SHA}${DIRTY_SUFFIX}" \
     "$ctx"
@@ -106,12 +105,12 @@ build_push_cloud_build() {
 build_push_model_server() {
   local version="${MODEL_SERVER_IMAGE_TAG:-v0.2.0}"
   if [[ "${USE_CLOUD_BUILD}" == "true" ]]; then
-    build_push_cloud_build "model-server" "$version" "$GPU_AR_HOST"
+    build_push_cloud_build "model-server" "$version" "$AR_HOST"
   else
     echo "WARNING: Building model-server locally. The vLLM CUDA image is ~10-15 GiB;"
     echo "         on Apple Silicon (QEMU emulation) this can take 30-60 min."
     echo "         Set USE_CLOUD_BUILD=true in .env to use Cloud Build instead."
-    build_push_local "model-server" "$version" "$GPU_AR_HOST"
+    build_push_local "model-server" "$version" "$AR_HOST"
   fi
 }
 
@@ -143,5 +142,5 @@ echo ""
 echo "Build & push complete."
 echo ""
 echo "Update terraform.tfvars with the new image URIs before deploying:"
-echo "  model_server_image = \"${GPU_AR_HOST}/${GCP_PROJECT_ID}/${AR_REPO}/model-server:${MODEL_SERVER_IMAGE_TAG:-v0.2.0}\""
+echo "  model_server_image = \"${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPO}/model-server:${MODEL_SERVER_IMAGE_TAG:-v0.2.0}\""
 echo "  coder_agent_image  = \"${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPO}/coder-agent:${CODER_AGENT_IMAGE_TAG:-v0.2.0}\""

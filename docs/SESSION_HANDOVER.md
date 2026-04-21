@@ -4,35 +4,35 @@
 
 ---
 
-## Current state — 2026-04-21 (post-merge: MVP migration complete)
+## Current state — 2026-04-21 (post-merge + regional pivot)
 
 ### What's landed
 
-PRs #6–#10 merged into `main` (`c679b89`). The MVP migration cluster is fully in `main`. **Nothing deployed to GCP yet.**
+PRs #6–#10 merged the MVP migration cluster; PR #11 (this) adds a SESSION_HANDOVER refresh **and** the regional pivot (see ADR-0014). All services will run in `europe-west4`. **Nothing deployed to GCP yet.**
 
 | PR | Branch | What it brought in |
 |---|---|---|
 | #6 | `docs/adr-mvp-decisions` | [ADR-0010](adr/0010-vllm-as-model-server-runtime.md) vLLM supersedes llama.cpp; [ADR-0011](adr/0011-cloud-run-l4-gpu.md) Cloud Run L4 GPU; [ADR-0012](adr/0012-reintroduce-deepagents.md) DeepAgents re-introduced; [ADR-0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) Qwen3-Coder-30B AWQ int4. Status updates on ADR-0002/0008/0009 and [DECISIONS.md](DECISIONS.md). |
 | #7 | `chore/subagent-bash-permissions` | Orchestrator, qa-engineer, and doc-keeper background sub-agents can now run `git -C`, `git worktree`, `bash -n`, `shellcheck`. Resolves the "Sub-agent Bash permissions" deferred item from the prior block. |
-| #8 | `feat/vllm-model-server` | `services/model-server/` rewritten as a vLLM shim on a CUDA base (AWQ-Marlin, baked weights, `MAX_NUM_SEQS=4`). `infra/terraform/` adds `cloud_run_gpu` module (L4, `us-central1`) + second AR repo. `scripts/build-and-push.sh` defaults to Cloud Build for CUDA image. Updated `smoke-test.sh`, `teardown.sh`, new `setup-billing-alerts.sh` ($300/mo budget). Env vars aligned (`SERVED_MODEL_NAME` / `MAX_MODEL_LEN`). |
+| #8 | `feat/vllm-model-server` | `services/model-server/` rewritten as a vLLM shim on a CUDA base (AWQ-Marlin, baked weights, `MAX_NUM_SEQS=4`). `infra/terraform/` adds `cloud_run_gpu` module (L4) + Cloud Build defaults for CUDA image. Updated `smoke-test.sh`, `teardown.sh`, new `setup-billing-alerts.sh` ($300/mo budget). Env vars aligned (`SERVED_MODEL_NAME` / `MAX_MODEL_LEN`). *(Originally shipped with a us-central1 regional split per ADR-0011; superseded by ADR-0014 in this PR.)* |
 | #9 | `feat/reintroduce-deepagents-clean` | `services/coder-agent/` migrated to `deepagents==0.5.3` + `langgraph>=1.1`. Plan→analyze→implement→refine subagent graph (Shape A per ADR-0012). External FastAPI API unchanged. 35 pytest cases pass (1 skipped live-model gate). ADR-0001 compliance test added. |
 | #10 | `docs/session-handover-mvp-migration` | SESSION_HANDOVER update written pre-merge; content was accurate at time of writing, became stale on merge — replaced by this block. |
+| #11 | `docs/session-handover-post-merge` | This block + [ADR-0014](adr/0014-consolidate-model-server-to-europe-west4.md) (L4 now GA in europe-west4 → consolidate `model-server` back to primary region; single AR repo; `var.model_server_region` / `GPU_AR_HOST` / `MODEL_SERVER_REGION` removed; RUNBOOK regional-split section deleted). ADR-0011's regional decision is superseded; its other decisions (L4 SKU, scale-to-zero, cold-start acceptance, GEN2 env, sizing) remain in force. |
 
-Dead branches `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` no longer exist locally or on origin. `terraform.tfvars` exists locally (not committed).
+Dead branches `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` no longer exist locally or on origin. `terraform.tfvars` exists locally (not committed) — **contains stale `us-central1` values**; re-copy from `terraform.tfvars.example` before the next apply.
 
 ### What's in-flight / caveats
 
-- **Nothing deployed, no images pushed.** `terraform.tfvars` still holds a placeholder model-server image URI. First `terraform apply` requires a real digest.
-- **L4 GPU quota not yet confirmed.** GCP Console → IAM & Admin → Quotas → "Total Nvidia L4 GPU allocation, per project per region" → `us-central1` → at least 1. Default for new projects is 0.
+- **Nothing deployed, no images pushed.** `terraform.tfvars` holds placeholder image URIs (and stale us-central1 values from before ADR-0014 — overwrite before apply). First `terraform apply` requires real digests in europe-west4 AR.
+- **L4 GPU quota not yet confirmed.** GCP Console → IAM & Admin → Quotas → "Total Nvidia L4 GPU allocation, per project per region" → `europe-west4` → at least 1. Default for new projects is 0. `europe-west4` is GA/self-serve (ADR-0014).
 - **`max_model_len=32768` is a proposal, not a measurement.** Must validate on real L4 (ADR-0013). `entrypoint.sh` exposes `MAX_MODEL_LEN` so the operator can drop to 24576 / 16384 without rebuilding.
-- **Regional split.** coder-agent stays in `europe-west4`; model-server in `us-central1` (Cloud Run L4 not available in europe-west4 as of 2026-04). ~100–130 ms cross-region RTT per agent→model call — documented in [RUNBOOK](RUNBOOK.md).
 - **Cost envelope.** Budget alert threshold is $300/mo. L4 on Cloud Run ~$0.90/hr warm; 8 active hrs/day ≈ $220/mo.
 - **`/ready` 5 s probe timeout too tight for vLLM's 60 s cold start.** Load-bearing — must be bumped before first deploy.
 
 ### Next actions (in priority order)
 
-1. **Confirm L4 quota** in `us-central1` is approved (GCP Console or `gcloud`).
-2. **Build + push images:** `./scripts/build-and-push.sh model-server` (Cloud Build) then `./scripts/build-and-push.sh coder-agent`. Update `terraform.tfvars` with resulting digests/tags.
+1. **Confirm L4 quota** in `europe-west4` is approved (GCP Console or Cloud Quotas API — `europe-west4` is self-serve per ADR-0014).
+2. **Build + push images:** `./scripts/build-and-push.sh model-server` (Cloud Build) then `./scripts/build-and-push.sh coder-agent`. Both pushes land in the single europe-west4 AR repo. Update `terraform.tfvars` with resulting digests/tags (and overwrite the stale us-central1 values in the local file).
 3. **Bump `/ready` probe timeout** on model-server Cloud Run service before applying (carried from caveats above).
 4. **Deploy:** `./scripts/deploy.sh plan` → review → `./scripts/deploy.sh apply`.
 5. **Smoke test:** `./scripts/smoke-test.sh` — expect 20–60 s first-hit latency.
@@ -48,13 +48,12 @@ Dead branches `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` no longe
 ### Open questions for the next session
 
 - Warmup ping or temporary `min_instances=1` for demos (trades idle-zero for predictable first response)?
-- Does the cross-region split hold once real agent loops (10+ model calls each) are in play, or do we need to co-locate in `us-central1`?
 - Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
 
 ### Cost-to-date
 
 - Zero incremental GCP cost. No deploys, no registry pushes.
-- Project at ~$0.10–$0.20/mo idle. First apply adds a second ~10 GiB AR repo (~$1.50/mo) plus L4-hours once the service handles requests.
+- Project at ~$0.10–$0.20/mo idle. First apply adds one ~10 GiB AR repo (~$1.00–1.50/mo) plus L4-hours once the service handles requests.
 
 ### Hand-off plan
 

@@ -8,8 +8,8 @@
 #    by Cloud Run when node_selector accelerator is set).
 #  - launch_stage = "GA" -- Cloud Run GPU with L4 is GA as of 2026-04
 #    (confirmed in ADR-0011). No BETA annotation required.
-#  - Region MUST be us-central1 (or another L4-enabled region). europe-west4
-#    does NOT support L4 as of 2026-04 (ADR-0011 supersedes ADR-0004).
+#  - Region must support L4 Cloud Run GPU. europe-west4 is GA per ADR-0014
+#    (supersedes ADR-0011 regional split).
 #  - cpu_idle must be false when GPU is attached: Cloud Run keeps CPU/GPU
 #    allocated during the full request even when awaiting tokens. Setting
 #    cpu_idle=true on a GPU service causes provisioning errors.

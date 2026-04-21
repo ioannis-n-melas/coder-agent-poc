@@ -4,7 +4,7 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "GCP region for regional resources (coder-agent, artifact registry primary)"
+  description = "GCP region for all regional resources (coder-agent, model-server GPU, Artifact Registry). L4 on Cloud Run is GA in europe-west4 per ADR-0014."
   type        = string
   default     = "europe-west4"
 }
@@ -17,7 +17,7 @@ variable "artifact_registry_repo" {
 
 # ── model-server sizing ──────────────────────────────────────────────
 variable "model_server_image" {
-  description = "Full image URI for model-server (us-central1-docker.pkg.dev/... for GPU). Must NOT use :latest."
+  description = "Full image URI for model-server (europe-west4-docker.pkg.dev/...). Must NOT use :latest."
   type        = string
 }
 
@@ -60,11 +60,8 @@ variable "model_server_timeout_seconds" {
 }
 
 # ── model-server GPU config ──────────────────────────────────────────
-variable "model_server_region" {
-  description = "Region for the model-server GPU service. Must support NVIDIA L4 on Cloud Run (us-central1 confirmed per ADR-0011). Differs from var.region (europe-west4) — intentional regional split until Cloud Run GPU expands to europe-west4."
-  type        = string
-  default     = "us-central1"
-}
+# Regional split removed (ADR-0014): model-server now runs in var.region
+# (europe-west4) alongside coder-agent. L4 on Cloud Run is GA there.
 
 variable "model_server_gpu_enabled" {
   description = "Attach NVIDIA L4 GPU to model-server. Set false only for CPU-only debugging; the vLLM image will not serve the Qwen3-30B model usably without GPU."

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Tear down Cloud Run services (keeps AR repos, state bucket, GCP project).
+# Tear down Cloud Run services (keeps AR repo, state bucket, GCP project).
 #
-# Regional split (ADR-0011):
-#   coder-agent  → europe-west4 (GCP_REGION)
-#   model-server → us-central1  (MODEL_SERVER_REGION)
+# Both services run in $GCP_REGION (europe-west4) per ADR-0014.
 #
 # For a full project delete, do it manually in the GCP console.
 # This script is intentionally scoped to avoid destroying things that
@@ -19,14 +17,12 @@ set -a; source "$REPO_ROOT/.env" 2>/dev/null || source "$REPO_ROOT/.env.example"
 : "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set in .env}"
 : "${GCP_REGION:?GCP_REGION must be set in .env}"
 
-MODEL_SERVER_REGION="${MODEL_SERVER_REGION:-us-central1}"
-
 echo "This will tear down:"
 echo "  - Cloud Run service: coder-agent         (region: $GCP_REGION)"
-echo "  - Cloud Run service: model-server (GPU)  (region: $MODEL_SERVER_REGION)"
+echo "  - Cloud Run service: model-server (GPU)  (region: $GCP_REGION)"
 echo "  - Service accounts: coder-agent-sa, model-server-sa"
 echo "  - Artifacts bucket: ${GCP_PROJECT_ID}-artifacts"
-echo "  - Artifact Registry repo: ${AR_REPO:-coder-agent} (both regions)"
+echo "  - Artifact Registry repo: ${AR_REPO:-coder-agent}"
 echo ""
 echo "Keeps:"
 echo "  - GCP project and billing link"

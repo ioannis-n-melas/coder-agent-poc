@@ -1,12 +1,9 @@
 ########################################################################
 # main.tf — root composition
 #
-# Regional split (ADR-0011):
-#  - coder-agent      -> europe-west4  (var.region)
-#  - model-server     -> us-central1   (var.model_server_region)
-#    Reason: Cloud Run L4 GPU is not available in europe-west4 as of
-#    2026-04. Consolidate back when Cloud Run GPU expands regionally.
-#    Cross-region latency implication: documented in docs/RUNBOOK.md.
+# Single-region deployment (ADR-0014 supersedes ADR-0011 regional split):
+#   Both coder-agent and model-server (GPU) run in var.region (europe-west4).
+#   L4 Cloud Run GPU is GA in europe-west4 — no regional split needed.
 ########################################################################
 
 module "artifact_registry" {
@@ -14,17 +11,6 @@ module "artifact_registry" {
 
   project_id      = var.project_id
   region          = var.region
-  repository_name = var.artifact_registry_repo
-}
-
-# Second Artifact Registry repository in the GPU region so that Cloud Run
-# can pull images without cross-region egress. Images must be pushed to
-# both repos (or mirrored) -- build-and-push.sh handles this.
-module "artifact_registry_gpu_region" {
-  source = "./modules/artifact_registry"
-
-  project_id      = var.project_id
-  region          = var.model_server_region
   repository_name = var.artifact_registry_repo
 }
 
@@ -43,18 +29,18 @@ module "storage" {
 }
 
 ########################################################################
-# model-server -- GPU (NVIDIA L4), us-central1
+# model-server -- GPU (NVIDIA L4), europe-west4 (ADR-0014)
 #
 # GPU QUOTA: Before apply, request quota in GCP Console:
 #   IAM & Admin -> Quotas -> filter "Cloud Run" ->
-#   "Total Nvidia L4 GPU allocation, per project per region" -> us-central1
+#   "Total Nvidia L4 GPU allocation, per project per region" -> europe-west4
 #   Request at least 1. Default for new projects is 0.
 ########################################################################
 module "model_server" {
   source = "./modules/cloud_run_gpu"
 
   project_id      = var.project_id
-  region          = var.model_server_region
+  region          = var.region
   service_name    = "model-server"
   image           = var.model_server_image
   service_account = module.iam.model_server_sa_email

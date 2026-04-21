@@ -3,7 +3,7 @@
 #
 # Acquires an ID token, calls coder-agent /health, /ready, and /chat.
 # Also directly probes the model-server /health endpoint to verify the
-# GPU service is up in its own region (us-central1).
+# GPU service is up (same region as coder-agent per ADR-0014).
 #
 # GPU cold start note (ADR-0011):
 #   vLLM + CUDA + AWQ model load ≈ 20-60s. The /chat request uses a
@@ -24,9 +24,7 @@ set -a; source "$REPO_ROOT/.env" 2>/dev/null || source "$REPO_ROOT/.env.example"
 : "${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set in .env}"
 : "${GCP_REGION:?GCP_REGION must be set in .env}"
 
-# model-server lives in its own region (us-central1 per ADR-0011).
-# Allow override via env var in case the GPU region changes later.
-MODEL_SERVER_REGION="${MODEL_SERVER_REGION:-us-central1}"
+# Both services live in $GCP_REGION (europe-west4) per ADR-0014.
 
 # ── Discover service URLs ───────────────────────────────────────────
 CODER_AGENT_URL="$(gcloud run services describe coder-agent \
@@ -41,18 +39,18 @@ if [[ -z "$CODER_AGENT_URL" ]]; then
 fi
 
 MODEL_SERVER_URL="$(gcloud run services describe model-server \
-  --region="$MODEL_SERVER_REGION" \
+  --region="$GCP_REGION" \
   --project="$GCP_PROJECT_ID" \
   --format='value(status.url)' 2>/dev/null || true)"
 
 if [[ -z "$MODEL_SERVER_URL" ]]; then
-  echo "model-server not found in project=$GCP_PROJECT_ID region=$MODEL_SERVER_REGION"
+  echo "model-server not found in project=$GCP_PROJECT_ID region=$GCP_REGION"
   echo "  Deploy first: ./scripts/deploy.sh apply"
   exit 1
 fi
 
 echo "coder-agent  URL : $CODER_AGENT_URL  (region: $GCP_REGION)"
-echo "model-server URL : $MODEL_SERVER_URL  (region: $MODEL_SERVER_REGION)"
+echo "model-server URL : $MODEL_SERVER_URL  (region: $GCP_REGION)"
 echo ""
 
 # ── Acquire identity tokens ────────────────────────────────────────
@@ -103,9 +101,9 @@ echo "  $ready_resp"
 reachable="$(echo "$ready_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('model_server_reachable',''))")"
 if [[ "$reachable" != "true" ]]; then
   echo "  WARNING: model-server not reachable from coder-agent."
-  echo "    Possible causes: GPU cold start still in progress, IAM binding missing,"
-  echo "    or cross-region connectivity issue. Check:"
-  echo "    gcloud run services get-iam-policy model-server --region=$MODEL_SERVER_REGION --project=$GCP_PROJECT_ID"
+  echo "    Possible causes: GPU cold start still in progress, IAM binding missing."
+  echo "    Check:"
+  echo "    gcloud run services get-iam-policy model-server --region=$GCP_REGION --project=$GCP_PROJECT_ID"
 fi
 echo ""
 

@@ -1,11 +1,6 @@
 output "model_server_url" {
-  description = "Cloud Run URL of the model-server (GPU, us-central1)"
+  description = "Cloud Run URL of the model-server (GPU, europe-west4 per ADR-0014)"
   value       = module.model_server.url
-}
-
-output "model_server_region" {
-  description = "Region where model-server is deployed (may differ from coder-agent — see ADR-0011)"
-  value       = module.model_server.region
 }
 
 output "coder_agent_url" {
@@ -24,13 +19,8 @@ output "model_server_sa" {
 }
 
 output "artifact_registry_repo" {
-  description = "Artifact Registry repository URI (europe-west4, primary)"
+  description = "Artifact Registry repository URI (europe-west4)"
   value       = module.artifact_registry.repository_url
-}
-
-output "artifact_registry_repo_gpu_region" {
-  description = "Artifact Registry repository URI (us-central1, for GPU service pulls)"
-  value       = module.artifact_registry_gpu_region.repository_url
 }
 
 output "artifacts_bucket" {
