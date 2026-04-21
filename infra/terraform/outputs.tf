@@ -1,10 +1,15 @@
 output "model_server_url" {
-  description = "Cloud Run URL of the model-server"
+  description = "Cloud Run URL of the model-server (GPU, us-central1)"
   value       = module.model_server.url
 }
 
+output "model_server_region" {
+  description = "Region where model-server is deployed (may differ from coder-agent — see ADR-0011)"
+  value       = module.model_server.region
+}
+
 output "coder_agent_url" {
-  description = "Cloud Run URL of the coder-agent"
+  description = "Cloud Run URL of the coder-agent (europe-west4)"
   value       = module.coder_agent.url
 }
 
@@ -19,8 +24,13 @@ output "model_server_sa" {
 }
 
 output "artifact_registry_repo" {
-  description = "Artifact Registry repository URI"
+  description = "Artifact Registry repository URI (europe-west4, primary)"
   value       = module.artifact_registry.repository_url
+}
+
+output "artifact_registry_repo_gpu_region" {
+  description = "Artifact Registry repository URI (us-central1, for GPU service pulls)"
+  value       = module.artifact_registry_gpu_region.repository_url
 }
 
 output "artifacts_bucket" {
@@ -29,6 +39,6 @@ output "artifacts_bucket" {
 }
 
 output "smoke_test_command" {
-  description = "Paste this to run a smoke test from your machine"
-  value       = "curl -H \"Authorization: Bearer $(gcloud auth print-identity-token --audiences=${module.coder_agent.url})\" ${module.coder_agent.url}/health"
+  description = "Run a smoke test from your machine"
+  value       = "curl -H \"Authorization: Bearer $(gcloud auth print-identity-token)\" ${module.coder_agent.url}/health"
 }

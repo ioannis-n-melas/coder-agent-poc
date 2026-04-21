@@ -2,18 +2,43 @@
 # Most values default sensibly in variables.tf.
 
 project_id         = "your-project-id"
-region             = "europe-west4"
+region             = "europe-west4"   # coder-agent region
 billing_account_id = "XXXXXX-XXXXXX-XXXXXX" # `gcloud billing accounts list`
 
-# Image URIs — the deploy script sets these from the latest build
-model_server_image = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/model-server:v0.1.0"
-coder_agent_image  = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/coder-agent:v0.1.0"
+# ── Regional split (ADR-0011) ─────────────────────────────────────────
+# model-server moves to us-central1 because Cloud Run L4 GPU is not
+# available in europe-west4 as of 2026-04. Override if Cloud Run GPU
+# expands to europe-west4 (see ADR-0011 trigger to revisit).
+model_server_region = "us-central1"
 
-# Budget
-monthly_budget_usd  = 20
+# ── Image URIs ────────────────────────────────────────────────────────
+# Image must be in the SAME Artifact Registry region as the Cloud Run
+# service to avoid cross-region pull latency.
+# model-server → us-central1 registry
+# coder-agent  → europe-west4 registry
+model_server_image = "us-central1-docker.pkg.dev/your-project-id/coder-agent/model-server:v0.2.0-sha-<git-sha>"
+coder_agent_image  = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/coder-agent:v0.2.0-sha-<git-sha>"
+
+# ── GPU ───────────────────────────────────────────────────────────────
+# GPU is enabled by default. Set to false only for CPU-only debugging.
+# model_server_gpu_enabled = true
+# model_server_gpu_type    = "nvidia-l4"
+
+# ── Budget ────────────────────────────────────────────────────────────
+# GPU (L4) cost: ~$0.90/hr when warm. At 8 active hrs/day ≈ $220/mo.
+# Default is $300 — adjust once you have a real usage baseline.
+monthly_budget_usd  = 300
 budget_alert_emails = ["you@example.com"]
 
-# Who can invoke the coder-agent Cloud Run service. Keep this tight.
+# ── Access control ────────────────────────────────────────────────────
 coder_agent_invoker_members = ["user:you@example.com"]
 
-# All sizing variables have POC-safe defaults — override here if you need to.
+# ── Sizing overrides ──────────────────────────────────────────────────
+# GPU (L4) mandates 8 vCPU / 32 Gi — these are the defaults, listed
+# here for documentation only. Do not reduce below L4 minimums.
+# model_server_cpu    = "8"
+# model_server_memory = "32Gi"
+
+# For demos: temporarily set min_instances=1 to eliminate cold starts.
+# Write an ADR before making permanent.
+# model_server_min_instances = 0
