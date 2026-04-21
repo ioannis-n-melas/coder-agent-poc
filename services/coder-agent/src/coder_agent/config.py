@@ -25,8 +25,12 @@ class Settings(BaseSettings):
         ),
     )
     model_name: str = Field(
-        default="qwen2.5-coder-1.5b",
-        description="Model identifier sent in the OpenAI request. Cosmetic for llama.cpp.",
+        default="Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        description=(
+            "Model identifier sent to the OpenAI-compatible model-server. Must match "
+            "the `--served-model-name` vLLM is launched with (ADR-0010, ADR-0013); "
+            "mismatch causes the model-server to 404 the request."
+        ),
     )
 
     gcp_project_id: str | None = Field(default=None)
