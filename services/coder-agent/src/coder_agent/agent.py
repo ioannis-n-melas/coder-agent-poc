@@ -1,14 +1,24 @@
-"""Plain chat loop for the coder agent (POC).
+"""Coder agent built on DeepAgents — plan → analyze → implement → refine.
 
-We deliberately do NOT use DeepAgents here. DeepAgents emits structured
-tool-call messages with ``content: null`` that llama.cpp's Hermes-2-Pro
-Jinja template parser rejects (``Expected 'content' to be a string or an
-array``). For a single-turn "write hello world" POC we don't need tools,
-subagents, or planning middlewares — a straight ``ChatOpenAI`` round-trip
-is enough.
+ADR-0012 re-introduces DeepAgents after ADR-0009 stripped it for the POC.
+The root cause of ADR-0009 (``content: null`` rejections from llama.cpp's
+Jinja template) is gone: vLLM (ADR-0010) handles OpenAI tool-calling cleanly.
 
-See ``docs/adr/0009-strip-deepagents-for-poc-chat.md`` for the full story
-and the trigger to bring DeepAgents (or a tool-capable runtime) back.
+Shape: one top-level ``create_deep_agent`` graph acting as the orchestrator
+(planner), with three declared subagents — analyzer, implementer, refiner —
+that it can delegate to via the built-in ``task`` tool. This is ADR-0012
+shape (A): four stages as DeepAgents subagents, orchestrated by the planner.
+The planner itself embodies the "plan" stage; the three subagents handle the
+remaining three stages.
+
+The public surface is unchanged: ``build_agent(settings)`` returns an object
+with an ``ainvoke({"messages": [...]})`` method — same shape main.py always
+expected, same shape the FastAPI route always passed in.
+
+ADR-0001 is preserved: no vLLM or llama.cpp imports anywhere in this module.
+The model is a ``ChatOpenAI`` instance pointed at ``settings.model_server_base``
+(an env-var-configured OpenAI-compatible URL). Swapping runtimes remains a URL
+change only.
 """
 
 from __future__ import annotations
@@ -17,16 +27,91 @@ import logging
 from typing import Any
 
 import httpx
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import BaseMessage
+from langgraph.graph.state import CompiledStateGraph
+from deepagents import create_deep_agent
+from deepagents.backends import StateBackend
 
 from coder_agent.config import Settings
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (
-    "You are a concise coding assistant. Answer with idiomatic, typed code. No filler commentary."
-)
+# ---------------------------------------------------------------------------
+# System prompts for each stage-subagent
+# ---------------------------------------------------------------------------
+
+_ORCHESTRATOR_SYSTEM_PROMPT = """\
+You are a coder-agent orchestrator.  When the user asks you to work on code,
+follow these four stages in order:
+
+1. **Plan**: Break the request into concrete sub-tasks.  Think about what
+   files need to be read, written, or changed, and what the expected outcome
+   of each step is.  Output a brief numbered plan.
+
+2. **Analyze**: Delegate to the "analyzer" subagent to examine the relevant
+   code, understand the codebase structure, and gather facts needed to
+   implement the plan.
+
+3. **Implement**: Delegate to the "implementer" subagent to write or modify
+   the code according to the plan and the analyzer's findings.
+
+4. **Refine**: Delegate to the "refiner" subagent to review the implementation,
+   check for errors, run any available tests, and apply improvements.
+
+After all four stages complete, synthesize the results and return a concise
+summary of what was done.
+
+Be direct.  Do not pad responses.  Do not explain what you are about to do —
+just do it.
+"""
+
+_ANALYZER_SYSTEM_PROMPT = """\
+You are the Analyze stage of a coder-agent pipeline.  Your job:
+
+- Read the relevant files indicated in the task description.
+- Understand the current structure: function signatures, imports, types,
+  patterns, and conventions used in the codebase.
+- Identify what specifically needs to change and why.
+- Return a concise structured report: which files, which lines, what
+  must change, and any constraints or risks to be aware of.
+
+Do not write any code.  Return only analysis and findings.
+"""
+
+_IMPLEMENTER_SYSTEM_PROMPT = """\
+You are the Implement stage of a coder-agent pipeline.  Your job:
+
+- Read the analyzer's report from the task description.
+- Write or modify the code files as specified.
+- Follow the existing style, types, and conventions of the codebase.
+- Prefer minimal, targeted edits over rewrites.
+- After writing, list every file you changed and what you changed.
+
+Return a summary: files changed, what was added/removed/modified.
+"""
+
+_REFINER_SYSTEM_PROMPT = """\
+You are the Refine stage of a coder-agent pipeline.  Your job:
+
+- Review the implementation described in the task.
+- Check for: type errors, logic bugs, missing edge-case handling,
+  inconsistency with surrounding code, and violated conventions.
+- If tests exist for the changed code, read them and verify the
+  implementation satisfies them.
+- Propose and apply targeted corrections — only where needed.
+- Return a verdict: "LGTM" (no changes needed) or a list of corrections
+  applied, each with a brief reason.
+"""
+
+# Maximum number of refine iterations before we stop.
+# DeepAgents' recursion limit is its own safety net, but we add an explicit
+# guard via the subagent description so the orchestrator knows when to stop.
+_MAX_REFINE_ITERATIONS = 3
+
+# ---------------------------------------------------------------------------
+# Google ID-token auth (unchanged from POC — ADR-0009 kept this)
+# ---------------------------------------------------------------------------
 
 
 class _GoogleIdTokenAuth(httpx.Auth):
@@ -63,19 +148,25 @@ class _GoogleIdTokenAuth(httpx.Auth):
             request.headers["Authorization"] = f"Bearer {token}"
         except Exception as exc:
             # Surface a clear signal in logs; the upstream 401 will still bubble up.
-            log.error("id_token.mint_failed", extra={"audience": self._audience, "error": str(exc)})
+            log.error(
+                "id_token.mint_failed",
+                extra={"audience": self._audience, "error": str(exc)},
+            )
         yield request
 
 
+# ---------------------------------------------------------------------------
+# Chat-model factory (unchanged from POC except public name stays consistent)
+# ---------------------------------------------------------------------------
+
+
 def build_chat_model(settings: Settings) -> ChatOpenAI:
-    """Return a LangChain chat model pointed at the self-hosted model-server.
+    """Return a LangChain ChatOpenAI pointed at the env-configured model-server.
 
-    The model-server exposes an OpenAI-compatible endpoint at `{settings.model_server_base}`.
-    No real API key is required; we pass a placeholder to satisfy the SDK.
-
-    When ``settings.model_server_audience`` is set (Cloud Run), we attach a
-    Google ID token to every outgoing request. When not set (local docker-compose,
-    unit tests), we send no auth header.
+    Passes ``base_url=settings.model_server_base`` (derived from
+    ``MODEL_SERVER_URL`` env var) so the model is backend-agnostic (ADR-0001).
+    When ``model_server_audience`` is set, attaches Google ID-token auth for
+    private Cloud Run (unchanged from POC).
     """
     audience = settings.model_server_audience
     http_client: httpx.Client | None = None
@@ -83,12 +174,14 @@ def build_chat_model(settings: Settings) -> ChatOpenAI:
     if audience:
         auth = _GoogleIdTokenAuth(audience)
         http_client = httpx.Client(auth=auth, timeout=settings.request_timeout_seconds)
-        http_async_client = httpx.AsyncClient(auth=auth, timeout=settings.request_timeout_seconds)
+        http_async_client = httpx.AsyncClient(
+            auth=auth, timeout=settings.request_timeout_seconds
+        )
 
     return ChatOpenAI(
         model=settings.model_name,
         base_url=settings.model_server_base,
-        api_key="not-used-by-llama-cpp",  # type: ignore[arg-type]
+        api_key="not-used-by-self-hosted-runtime",  # type: ignore[arg-type]
         temperature=settings.temperature,
         max_tokens=settings.max_tokens_per_response,  # type: ignore[call-arg]
         timeout=settings.request_timeout_seconds,
@@ -97,45 +190,143 @@ def build_chat_model(settings: Settings) -> ChatOpenAI:
     )
 
 
-class ChatAgent:
-    """Thin wrapper around a ``ChatOpenAI`` model providing an ``ainvoke`` method.
+# ---------------------------------------------------------------------------
+# DeepAgent graph factory
+# ---------------------------------------------------------------------------
 
-    Accepts a ``{"messages": [{"role": ..., "content": ...}]}`` payload — same
-    shape the FastAPI route previously handed to DeepAgents — and returns a
-    ``{"messages": [<reply>]}`` dict so the route can stay structurally stable.
+
+def _build_subagents(model: ChatOpenAI) -> list[dict[str, Any]]:
+    """Return the three stage-subagent specs (analyzer, implementer, refiner).
+
+    Each subagent shares the same ``ChatOpenAI`` instance so they all talk
+    to the same env-configured model-server (ADR-0001 preserved).
+
+    We explicitly set ``tools=[]`` for all subagents: they use the filesystem
+    tools injected by DeepAgents' built-in ``FilesystemMiddleware`` (ls, read,
+    write, edit, glob, grep) rather than any custom tools.  Passing an empty
+    list here just means "no additional tools beyond what middleware injects."
     """
+    return [
+        {
+            "name": "analyzer",
+            "description": (
+                "Reads and analyzes the relevant code files. "
+                "Use this after planning to gather the facts needed to implement. "
+                "Provide it a clear description of what to analyze and what to report."
+            ),
+            "system_prompt": _ANALYZER_SYSTEM_PROMPT,
+            "model": model,
+            "tools": [],
+        },
+        {
+            "name": "implementer",
+            "description": (
+                "Writes or modifies code files based on the plan and analyzer findings. "
+                "Use this after analysis is complete. "
+                "Provide it the full plan, analyzer report, and target file paths."
+            ),
+            "system_prompt": _IMPLEMENTER_SYSTEM_PROMPT,
+            "model": model,
+            "tools": [],
+        },
+        {
+            "name": "refiner",
+            "description": (
+                f"Reviews and corrects the implementation. "
+                f"Use this after implementation. "
+                f"It will iterate up to {_MAX_REFINE_ITERATIONS} times then stop. "
+                f"Provide it the implementation summary and file paths to review."
+            ),
+            "system_prompt": _REFINER_SYSTEM_PROMPT,
+            "model": model,
+            "tools": [],
+        },
+    ]
 
-    def __init__(self, model: ChatOpenAI, system_prompt: str = SYSTEM_PROMPT) -> None:
-        self._model = model
-        self._system_prompt = system_prompt
 
-    def _to_lc_messages(self, raw_messages: list[dict[str, Any]]) -> list[BaseMessage]:
-        messages: list[BaseMessage] = [SystemMessage(content=self._system_prompt)]
-        for m in raw_messages:
-            role = m.get("role")
-            content = m.get("content", "")
-            if role == "user":
-                messages.append(HumanMessage(content=content))
-            elif role == "system":
-                # Override default system prompt if caller explicitly passed one.
-                messages[0] = SystemMessage(content=content)
-            else:
-                # Ignore assistant turns etc. for the single-turn POC.
-                continue
-        return messages
+def build_deep_agent(settings: Settings) -> CompiledStateGraph:  # type: ignore[type-arg]
+    """Build and return the DeepAgents plan→analyze→implement→refine graph.
 
-    async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-        raw = payload.get("messages", [])
-        lc_messages = self._to_lc_messages(raw)
-        reply = await self._model.ainvoke(lc_messages)
-        return {"messages": [reply]}
+    Returns a ``CompiledStateGraph`` whose ``ainvoke`` accepts:
+        ``{"messages": [HumanMessage | {"role": ..., "content": ...}]}``
 
-
-def build_agent(settings: Settings) -> ChatAgent:
-    """Build the chat agent used by the /chat route.
-
-    Returns a ``ChatAgent`` with an ``ainvoke({'messages': [...]})`` interface,
-    matching the shape ``main.py`` expects so the FastAPI contract is preserved.
+    This is the same shape ``main.py`` always passed to the agent — the
+    FastAPI surface is unchanged.
     """
     model = build_chat_model(settings)
-    return ChatAgent(model=model)
+    subagents = _build_subagents(model)
+
+    graph = create_deep_agent(
+        model=model,
+        system_prompt=_ORCHESTRATOR_SYSTEM_PROMPT,
+        subagents=subagents,  # type: ignore[arg-type]
+        backend=StateBackend(),
+        name="coder-agent",
+    )
+
+    log.info(
+        "deep_agent.built",
+        extra={
+            "model_name": settings.model_name,
+            "model_server_base": settings.model_server_base,
+            "subagents": [s["name"] for s in subagents],
+        },
+    )
+    return graph
+
+
+# ---------------------------------------------------------------------------
+# DeepAgentWrapper — preserves the ``ainvoke({messages: [...]})`` contract
+# ---------------------------------------------------------------------------
+
+
+class DeepAgentWrapper:
+    """Thin adapter that presents a ``CompiledStateGraph`` via the same
+    ``ainvoke({"messages": [...]})`` interface that ``main.py`` expects.
+
+    The wrapper also normalises the output: ``main.py`` reads
+    ``result["messages"][-1].content`` — that's what DeepAgents returns
+    natively, so no output transformation is needed.  The wrapper exists
+    purely to (a) hold the graph instance and (b) give a named type for
+    isinstance checks in tests.
+    """
+
+    def __init__(self, graph: CompiledStateGraph) -> None:  # type: ignore[type-arg]
+        self._graph = graph
+
+    async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Invoke the DeepAgents graph and return its output unchanged.
+
+        ``payload`` must have shape ``{"messages": [...]}``.  Messages can be
+        ``BaseMessage`` instances or ``{"role": ..., "content": ...}`` dicts —
+        DeepAgents accepts both.
+        """
+        result: dict[str, Any] = await self._graph.ainvoke(payload)
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Public factory — matches main.py's ``build_agent(settings)`` call
+# ---------------------------------------------------------------------------
+
+
+def build_agent(settings: Settings) -> DeepAgentWrapper:
+    """Build the coder agent used by the /chat route.
+
+    Returns a ``DeepAgentWrapper`` with ``ainvoke({'messages': [...]})`` — the
+    same interface ``main.py`` always expected from ``ChatAgent``.
+
+    The underlying graph is a ``create_deep_agent`` with planner (orchestrator)
+    + analyzer + implementer + refiner subagents (ADR-0012 shape A).
+    """
+    graph = build_deep_agent(settings)
+    return DeepAgentWrapper(graph=graph)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat alias — tests that import ``ChatAgent`` or ``SYSTEM_PROMPT``
+# directly will still resolve.  Remove after test suite is updated.
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = _ORCHESTRATOR_SYSTEM_PROMPT
+ChatAgent = DeepAgentWrapper  # type alias for tests that check isinstance

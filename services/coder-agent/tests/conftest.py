@@ -29,12 +29,21 @@ def app_client(env_model_server: None, monkeypatch: pytest.MonkeyPatch) -> Itera
     """FastAPI test client with the agent build stubbed out.
 
     We replace build_agent so tests don't need a running model-server.
+    The stub returns a fake DeepAgentWrapper-shaped object whose ainvoke
+    echoes the prompt — same shape DeepAgentWrapper provides.
     """
 
     class _FakeAgent:
         async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-            prompt = payload["messages"][-1]["content"]
-            return {"messages": [{"role": "assistant", "content": f"echo: {prompt}"}]}
+            # Support both BaseMessage objects and role/content dicts.
+            messages = payload.get("messages", [])
+            last = messages[-1] if messages else {}
+            content = getattr(last, "content", None) or (
+                last.get("content", "") if isinstance(last, dict) else ""
+            )
+            return {
+                "messages": [{"role": "assistant", "content": f"echo: {content}"}]
+            }
 
     def _fake_build(_settings: Settings) -> _FakeAgent:
         return _FakeAgent()
