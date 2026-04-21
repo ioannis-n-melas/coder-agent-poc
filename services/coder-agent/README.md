@@ -65,7 +65,7 @@ See [src/coder_agent/config.py](src/coder_agent/config.py) for the full list.
 | Var | Default | Purpose |
 |---|---|---|
 | `MODEL_SERVER_URL` | — (required) | Base URL of the model-server (includes or implies `/v1`). |
-| `MODEL_NAME` | `qwen2.5-coder-1.5b` | Model name passed to the OpenAI client. |
+| `MODEL_NAME` | `Qwen/Qwen3-Coder-30B-A3B-Instruct` | Model id sent to the model-server; must match vLLM's `--served-model-name` (ADR-0013). |
 | `MODEL_SERVER_AUDIENCE` | — (optional) | Cloud Run audience for Google ID-token auth. |
 | `TEMPERATURE` | `0.2` | Sampling temperature. |
 | `MAX_TOKENS_PER_RESPONSE` | `1024` | Max tokens per model response. |

@@ -1,8 +1,6 @@
 """Coder agent built on DeepAgents — plan → analyze → implement → refine.
 
-ADR-0012 re-introduces DeepAgents after ADR-0009 stripped it for the POC.
-The root cause of ADR-0009 (``content: null`` rejections from llama.cpp's
-Jinja template) is gone: vLLM (ADR-0010) handles OpenAI tool-calling cleanly.
+ADR-0012 re-introduces DeepAgents for the MVP (supersedes ADR-0009).
 
 Shape: one top-level ``create_deep_agent`` graph acting as the orchestrator
 (planner), with three declared subagents — analyzer, implementer, refiner —
