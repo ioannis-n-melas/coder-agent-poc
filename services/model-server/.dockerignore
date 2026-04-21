@@ -1,0 +1,22 @@
+# Build-context hygiene: keep only what the two Dockerfile stages need.
+# The weight-downloader stage needs scripts/fetch_weights.py. The runtime
+# stage needs entrypoint.sh. Everything else is noise.
+
+tests/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.git/
+.gitignore
+.DS_Store
+
+# Pyproject / lockfile only matter for local dev-loop pytest; not needed
+# inside the image.
+pyproject.toml
+uv.lock
+README.md
