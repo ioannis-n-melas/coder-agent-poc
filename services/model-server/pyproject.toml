@@ -1,0 +1,53 @@
+[project]
+name = "model-server"
+version = "0.2.0"
+description = "vLLM OpenAI-compatible model server for Qwen3-Coder-30B-A3B-Instruct (AWQ int4)"
+requires-python = ">=3.12"
+readme = "README.md"
+
+# The server itself runs inside the vLLM base image (see Dockerfile) and does
+# NOT import vLLM from this project's virtualenv. These dependencies exist so
+# that:
+#   (a) the weight-download stage in the Dockerfile has a tiny, pinned HF toolchain,
+#   (b) contract tests can spin up a uvicorn-hosted health/models stub on a
+#       developer laptop without a GPU.
+# Keep this list minimal — no Python agent logic lives here (CLAUDE.md §7).
+dependencies = [
+    "huggingface-hub>=0.27",
+    "hf-transfer>=0.1.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# No runtime Python package ships from this project; the "server" is vLLM
+# itself, invoked from the base image. This stanza exists so `uv sync` on a
+# developer laptop succeeds without needing a wheel target.
+bypass-selection = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "gpu: requires a CUDA-capable GPU and the vLLM server running (skipped locally without a GPU)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
