@@ -1,0 +1,48 @@
+name: deploy
+
+# Manual deploy — kept gated to avoid surprise spend.
+# Wires Workload Identity Federation when the repo is configured for it.
+# For now this is a stub showing intent — the actual deploy still happens via
+# scripts/deploy.sh from a developer machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "poc"
+        type: choice
+        options: [poc]
+
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation
+
+jobs:
+  deploy:
+    name: Build, push, deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── To enable: set repo vars GCP_PROJECT_ID, GCP_REGION, WIF_PROVIDER, WIF_SA
+      # - uses: google-github-actions/auth@v2
+      #   with:
+      #     workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+      #     service_account: ${{ vars.WIF_SA }}
+      #
+      # - uses: google-github-actions/setup-gcloud@v2
+      #
+      # - name: Build, push, deploy
+      #   run: |
+      #     ./scripts/build-and-push.sh
+      #     ./scripts/deploy.sh apply
+      #     ./scripts/smoke-test.sh
+
+      - name: Stub
+        run: |
+          echo "Deploy workflow scaffolded. Wire Workload Identity Federation"
+          echo "and uncomment the steps above to enable. See ADR 0006."
+          echo "For now, deploy from a developer machine: ./scripts/deploy.sh apply"

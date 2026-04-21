@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python — lint + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/coder-agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.8"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install deps
+        run: uv sync --frozen --all-extras || uv sync --all-extras
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (mypy)
+        run: uv run mypy src
+
+      - name: Test (pytest)
+        run: uv run pytest -q
+
+  terraform:
+    name: Terraform — fmt + validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate
+        run: |
+          # Validate without backend (no GCP creds in CI for plain validate)
+          terraform init -backend=false
+          terraform validate
+
+  docker-build:
+    name: Docker build — smoke
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [coder-agent]   # model-server is heavy (downloads 1 GB) — skip in PR CI
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service }} (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: false
+          tags: ${{ matrix.service }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

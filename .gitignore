@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# uv
+.uv/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# GCP
+*-service-account.json
+*.json.key
+credentials.json
+key.json
+
+# Models (downloaded locally for dev)
+/models/
+*.gguf
+*.bin
+*.safetensors
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Claude Code local overrides
+.claude/settings.local.json
+
+# Logs
+*.log
+logs/
+
+# Temp
+/tmp/
+/.cache/

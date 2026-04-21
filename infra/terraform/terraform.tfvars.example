@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is git-ignored.
+# Most values default sensibly in variables.tf.
+
+project_id         = "your-project-id"
+region             = "europe-west4"
+billing_account_id = "XXXXXX-XXXXXX-XXXXXX" # `gcloud billing accounts list`
+
+# Image URIs — the deploy script sets these from the latest build
+model_server_image = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/model-server:v0.1.0"
+coder_agent_image  = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/coder-agent:v0.1.0"
+
+# Budget
+monthly_budget_usd  = 20
+budget_alert_emails = ["you@example.com"]
+
+# Who can invoke the coder-agent Cloud Run service. Keep this tight.
+coder_agent_invoker_members = ["user:you@example.com"]
+
+# All sizing variables have POC-safe defaults — override here if you need to.
