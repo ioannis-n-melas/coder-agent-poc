@@ -13,9 +13,10 @@
 #
 # model-server (GPU image) build strategy:
 #   The vLLM CUDA base image is ~10-15 GiB. Building locally on an M-series
-#   Mac (linux/amd64 emulated) is extremely slow (~30-60 min). Cloud Build is
-#   strongly recommended for model-server. Set USE_CLOUD_BUILD=true in .env
-#   (or pass it as an env var) to use Cloud Build. Default: local Docker build.
+#   Mac (linux/amd64 emulated) is extremely slow (~30-60 min). Cloud Build
+#   runs on native amd64 and is the default for model-server. Set
+#   USE_CLOUD_BUILD=false in .env to force a local Docker build (not
+#   recommended for the GPU image).
 #
 #   Cloud Build tradeoff:
 #     PRO: runs on native amd64, fast CUDA layer pulls from GCR, no local disk.
@@ -52,7 +53,7 @@ fi
 
 # Whether to use Cloud Build for the model-server image.
 # Strongly recommended for the vLLM/CUDA image (see header comment).
-USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
+USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-true}"
 
 build_push_local() {
   local svc="$1" version="$2" registry_host="$3"

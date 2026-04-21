@@ -5,7 +5,7 @@ resource "google_service_account" "model_server" {
   project      = var.project_id
   account_id   = "model-server-sa"
   display_name = "model-server (Cloud Run)"
-  description  = "Runs the llama.cpp model server. Minimal permissions — only reads its own image."
+  description  = "Runs the vLLM model server (ADR-0010, ADR-0013). Minimal permissions — only reads its own image."
 }
 
 # Allow the SA to read its image from Artifact Registry (implicit via service agent for Cloud Run,

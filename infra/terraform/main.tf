@@ -77,12 +77,15 @@ module "model_server" {
   startup_probe_timeout           = 10
 
   env = {
-    # vLLM reads PORT from the environment; Cloud Run sets it automatically.
-    # Explicit vars below are informational -- ml-engineer owns the Dockerfile CMD.
-    VLLM_SERVED_MODEL_NAME = "qwen3-coder"
-    # max_model_len must be validated by ml-engineer before deploy (ADR-0013).
-    # Default 32768 -- reduce to 16384 or 24576 if KV cache exceeds VRAM headroom.
-    VLLM_MAX_MODEL_LEN = "32768"
+    # PORT is set by Cloud Run automatically; vLLM reads it via entrypoint.sh.
+    # SERVED_MODEL_NAME must match the coder-agent's MODEL_NAME
+    # (coder-agent/src/coder_agent/config.py). Both sides default to the
+    # full HF id; mismatch causes vLLM to 404 /v1/chat/completions.
+    SERVED_MODEL_NAME = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+    # max_model_len must be validated by ml-engineer on real L4 before deploy
+    # (ADR-0013). Default 32768 -- reduce to 16384 or 24576 if KV cache
+    # exceeds VRAM headroom.
+    MAX_MODEL_LEN = "32768"
   }
 
   # Only the coder-agent SA can invoke (CLAUDE.md s3.4 -- no allUsers without ADR).
