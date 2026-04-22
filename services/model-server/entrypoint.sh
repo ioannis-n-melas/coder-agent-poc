@@ -60,6 +60,14 @@ GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
 # (graphs on) for throughput; flip to "true" if we measure OOM at startup.
 ENFORCE_EAGER="${ENFORCE_EAGER:-false}"
 
+# ---- tool calling --------------------------------------------------------
+# DeepAgents (ADR-0012) drives tool calls via OpenAI tool-choice semantics.
+# vLLM requires --enable-auto-tool-choice + --tool-call-parser to accept
+# tool_choice="auto" from the client, otherwise requests fail with 400.
+# Qwen3-Coder uses the Hermes-style tool-call grammar (same as Qwen2.5).
+ENABLE_TOOL_CHOICE="${ENABLE_TOOL_CHOICE:-true}"
+TOOL_CALL_PARSER="${TOOL_CALL_PARSER:-hermes}"
+
 # ---- assemble argv -------------------------------------------------------
 ARGS=(
     --model "${MODEL_DIR}"
@@ -78,6 +86,10 @@ if [[ "${ENFORCE_EAGER}" == "true" ]]; then
     ARGS+=(--enforce-eager)
 fi
 
+if [[ "${ENABLE_TOOL_CHOICE}" == "true" ]]; then
+    ARGS+=(--enable-auto-tool-choice --tool-call-parser "${TOOL_CALL_PARSER}")
+fi
+
 echo "[entrypoint] launching vLLM OpenAI server"
 echo "[entrypoint]   served-model-name : ${SERVED_MODEL_NAME}"
 echo "[entrypoint]   model-dir         : ${MODEL_DIR}"
@@ -87,5 +99,7 @@ echo "[entrypoint]   max-model-len     : ${MAX_MODEL_LEN}"
 echo "[entrypoint]   max-num-seqs      : ${MAX_NUM_SEQS}"
 echo "[entrypoint]   gpu-mem-util      : ${GPU_MEMORY_UTILIZATION}"
 echo "[entrypoint]   enforce-eager     : ${ENFORCE_EAGER}"
+echo "[entrypoint]   tool-choice       : ${ENABLE_TOOL_CHOICE}"
+echo "[entrypoint]   tool-call-parser  : ${TOOL_CALL_PARSER}"
 
 exec python3 -m vllm.entrypoints.openai.api_server "${ARGS[@]}"
