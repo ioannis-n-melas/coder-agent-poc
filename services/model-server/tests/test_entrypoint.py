@@ -113,6 +113,27 @@ def test_enforce_eager_flag_added_only_when_requested() -> None:
     assert "--enforce-eager" in argv_on
 
 
+def test_tool_choice_flags_present_by_default() -> None:
+    """DeepAgents (ADR-0012) requires --enable-auto-tool-choice + parser."""
+    argv = _run_entrypoint_in_dryrun(env={})
+    assert "--enable-auto-tool-choice" in argv
+    assert "--tool-call-parser" in argv
+    assert argv[argv.index("--tool-call-parser") + 1] == "hermes"
+
+
+def test_tool_choice_can_be_disabled() -> None:
+    """Escape hatch if a future model needs the vLLM default (no tool choice)."""
+    argv = _run_entrypoint_in_dryrun(env={"ENABLE_TOOL_CHOICE": "false"})
+    assert "--enable-auto-tool-choice" not in argv
+    assert "--tool-call-parser" not in argv
+
+
+def test_tool_call_parser_override() -> None:
+    """Swap the parser for a future model (e.g. llama3_json)."""
+    argv = _run_entrypoint_in_dryrun(env={"TOOL_CALL_PARSER": "llama3_json"})
+    assert argv[argv.index("--tool-call-parser") + 1] == "llama3_json"
+
+
 def test_script_uses_strict_mode() -> None:
     """Regressions on `set -euo pipefail` have bitten ops-y shell scripts
     before. Lock it in so a careless edit doesn't silently swallow errors."""
