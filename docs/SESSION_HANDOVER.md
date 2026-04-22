@@ -4,11 +4,91 @@
 
 ---
 
-## Current state — 2026-04-22 (deployed, awaiting tool-choice rebuild)
+## Current state — 2026-04-22 (end of session: deployed + chat_template blocker)
 
-### What's landed
+### What's landed since the prior block
 
-PRs #11–#18 merged today (all admin-bypassed due to a pre-existing Python CI lint failure on main from PR #9). All three services are live in `europe-west4`.
+- **PR #19** (SESSION_HANDOVER refresh — merged on `main` at `5e62a22`): the prior block captured the mid-session state.
+- **Cloud Build `ed6cfba3` finished** (23m01s). New model-server image pushed to AR:
+  `sha256:5379d924e91a1cf3258f82ce29067511826713aa0fe986a9eca8f69f425bc0e7`. Local `terraform.tfvars` pinned to this digest.
+- **`terraform apply` completed** (17m39s). First-time pull of the new ~17 GiB image — layer cache cold because digest changed. `model-server-00007-hrs` now serves 100% of traffic with the tool-choice fix active.
+
+**Deployed services** (all private, scale-to-zero):
+
+| Service | URL |
+|---|---|
+| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` |
+| `model-server` | `https://model-server-5eiztln6kq-ez.a.run.app` |
+| `billing-kill-switch` | `https://billing-kill-switch-5eiztln6kq-ez.a.run.app` |
+
+### Smoke test result (`./scripts/smoke-test.sh`)
+
+| Check | Result |
+|---|---|
+| model-server `/health` | OK |
+| coder-agent `/health` | OK |
+| coder-agent `/ready` (`model_server_reachable: true`) | OK |
+| coder-agent `/chat` | **502** |
+
+### Blocker — next-session priority 1
+
+**Chat template missing from AWQ tokenizer.**
+
+vLLM now accepts `tool_choice=auto` (PR #18 fix verified). A new error surfaced from the tokenizer on the first real `/chat` call:
+
+> `'As of transformers v4.44, default chat template is no longer allowed, so you must provide a chat template if the tokenizer does not define one.'`
+
+`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit` community repo's `tokenizer_config.json` does not ship a `chat_template` field. vLLM refuses to format messages without one.
+
+**Three fix options** (most to least recommended):
+
+| Option | Approach | Rebuild cost | Notes |
+|---|---|---|---|
+| **A (recommended)** | Update `services/model-server/scripts/fetch_weights.py` to also pull `tokenizer_config.json` (or `chat_template.jinja`) from `Qwen/Qwen3-Coder-30B-A3B-Instruct` official repo and overlay onto the AWQ weight dir. | One Cloud Build + apply cycle | Minimal code change; keeps template coupled to weights; self-contained. |
+| **B** | Pass `--chat-template <path>` to vLLM in `entrypoint.sh`; bake template file at a known location in the image. | One Cloud Build + apply cycle | Slightly more brittle — decouples template from weights. |
+| **C** | Switch AWQ repo to one that ships the template. | Research + one Cloud Build + apply cycle | Biggest change; needs research on available AWQ variants for Qwen3-Coder-30B-A3B-Instruct. |
+
+### What's in-flight / caveats
+
+- **Pre-existing Python CI lint failure on main** (PR #9 — import-sorting + unused symbols in `services/coder-agent/src/coder_agent/agent.py`). Every PR this session required admin bypass. Needs cleanup before the next feature cycle.
+- **L4 is no-zonal-redundancy only.** GCP denied the zonal-redundant variant. Single-zone, POC-acceptable per ADR-0014. Quota retry scheduled for ~1 week out.
+- **Stale local branch** `chore/redact-for-public-release` — billing ID in history, remote gone, safe to delete.
+- **GitHub `refs/pull/{1..4}/head`** still leak billing ID from pre-2026-04-21 orphan-squash era. Documented plan for a future session (nuclear delete + recreate); not in-repo.
+
+### Deferred (not blocking MVP)
+
+- **503-during-load contract test** on model-server `/health` (qa-engineer; requires mocking vLLM startup phases).
+- `_GoogleIdTokenAuth` auth ADR (carried over).
+- `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
+
+### Open questions for the next session
+
+- Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
+- Should we gate the model-server with a warmup ping to mask cold-start latency for demos?
+- Option A vs B for the chat-template fix: is keeping the template coupled to the weight dir important, or is a separate baked-in template file acceptable?
+
+### Cost-to-date
+
+- Idle: ~£0.10/mo (AR repo + state bucket).
+- L4 active: ~£0.72/hr (approx). Full day warm ≈ £17; POC usage 2–4 hrs/day ≈ £1.50–3.00/day.
+- Kill-switch armed at £500 GBP billing-account cap.
+- Cloud Build this session: ~46 min total (two builds). AR storage added: ~15 GiB (one new image; PR #18 replaced the prior digest).
+
+### Hand-off plan
+
+- `ml-engineer` — owns chat-template fix (options A/B/C above); primary next action.
+- `devops-engineer` — fix Python lint failure on main to unblock normal PR merges.
+- `qa-engineer` — 503-during-load contract test (deferred); wire live-chat smoke test into CI behind an env gate.
+- `doc-keeper` — write carried-over `_GoogleIdTokenAuth` ADR.
+- `orchestrator` — coordinates if post-fix smoke test surfaces cross-cutting issues.
+
+---
+
+## Archive
+
+### 2026-04-22 — deployed, awaiting tool-choice rebuild
+
+PRs #11–#18 merged (all admin-bypassed due to a pre-existing Python CI lint failure on main from PR #9). All three services live in `europe-west4`.
 
 | PR | Branch | What it brought in |
 |---|---|---|
@@ -21,55 +101,7 @@ PRs #11–#18 merged today (all admin-bypassed due to a pre-existing Python CI l
 | #17 | `fix/max-model-len-24576` | `MAX_MODEL_LEN` 32768 → 24576. vLLM measured `3.0 GiB KV cache needed, 2.63 GiB available` at 32k; 24576 gives headroom below the ceiling. ADR-0013 updated with measured numbers. |
 | #18 | `fix/vllm-tool-choice` | `entrypoint.sh` now passes `--enable-auto-tool-choice --tool-call-parser hermes` (env-controlled via `ENABLE_TOOL_CHOICE` / `TOOL_CALL_PARSER`). Without this, vLLM returned 400 when DeepAgents sent `tool_choice=auto`. 3 new contract tests; 14/14 entrypoint tests pass. |
 
-**Deployed services** (all private, scale-to-zero):
-
-| Service | URL |
-|---|---|
-| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` |
-| `model-server` | `https://model-server-5eiztln6kq-ez.a.run.app` |
-| `billing-kill-switch` | `https://billing-kill-switch-5eiztln6kq-ez.a.run.app` |
-
-### What's in-flight / caveats
-
-- **Cloud Build rebuilding model-server** with PR #18 tool-choice fix (background task `bc7nzpahm`). The currently deployed model-server image is pre-PR-#18 and missing the tool-choice flags. Until the new image is rolled out, `/chat` returns 400 from vLLM.
-- **After build lands**: update `terraform.tfvars` with the new model-server digest, run `terraform apply`, re-run `./scripts/smoke-test.sh`.
-- **Pre-existing Python CI lint failure on main** (from PR #9 — import-sorting + unused symbols in `services/coder-agent/src/coder_agent/agent.py`). Blocking normal merges; every PR this session required admin bypass. Needs cleanup before the next feature cycle.
-- **L4 is no-zonal-redundancy only.** GCP denied the zonal-redundant variant (high demand). Single-zone, POC-acceptable per ADR-0014. Retry guidance from GCP: "in the coming months."
-
-### Next actions (in priority order)
-
-1. **Wait on Cloud Build** `bc7nzpahm` to finish; update local `terraform.tfvars` with the new model-server image digest.
-2. **`./scripts/deploy.sh apply`** to roll the new model-server revision.
-3. **`./scripts/smoke-test.sh`** — full chat round-trip. Last run (pre-PR-#18): `/health` OK, `/ready` OK, `/chat` 502 (now expected to be fixed).
-4. If green: stable MVP deploy confirmed. If not: diagnose and iterate.
-5. **Fix the Python lint failure** on main to unblock normal PR merges. (`ruff check --select I services/coder-agent/src/coder_agent/agent.py` and remove unused imports.)
-6. **Zonal-redundancy L4 quota**: consider re-submitting the quota request in ~1 week.
-
-### Deferred (not blocking MVP)
-
-- **503-during-load contract test** on model-server `/health` (qa-engineer; requires mocking vLLM startup phases).
-- `_GoogleIdTokenAuth` auth ADR (carried over).
-- `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
-- ADR-0013 language referencing 32k `max_model_len` as a proposal — update to reflect the measured 24576 ceiling (doc-keeper).
-
-### Open questions for the next session
-
-- Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
-- Should we gate the model-server with a warmup ping to mask cold-start latency for demos?
-
-### Cost-to-date
-
-- Idle: ~£0.10/mo (AR repo + state bucket).
-- L4 active: ~£0.72/hr (approx). Full day warm ≈ £17; POC usage 2–4 hrs/day ≈ £1.50–3.00/day.
-- Kill-switch armed at £500 GBP billing-account cap.
-
-### Hand-off plan
-
-- `devops-engineer` — complete the model-server rebuild deploy (#1–#4 above); fix lint failure (#5).
-- `qa-engineer` — 503-during-load contract test (still deferred); wire live-chat smoke test into CI behind an env gate.
-- `ml-engineer` — tune `gpu_memory_utilization` to push `MAX_MODEL_LEN` back toward 28k now that we have real measurements.
-- `doc-keeper` — update ADR-0013 to replace the 32k proposal language with measured 24576 ceiling; write carried-over `_GoogleIdTokenAuth` ADR.
-- `orchestrator` — coordinates if post-rebuild smoke test surfaces cross-cutting issues.
+State at close: Cloud Build `bc7nzpahm` rebuilding model-server with PR #18 tool-choice fix; `terraform apply` pending; L4 no-zonal-redundancy only; Python CI lint failure on main blocking normal merges.
 
 ---
 
