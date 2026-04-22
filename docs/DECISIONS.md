@@ -22,6 +22,7 @@ All non-trivial choices for this project are recorded as ADRs (Architectural Dec
 | [0012](adr/0012-reintroduce-deepagents.md) | Accepted | Re-introduce DeepAgents as agent framework |
 | [0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) | Accepted | Qwen3-Coder-30B-A3B-Instruct as MVP model |
 | [0014](adr/0014-consolidate-model-server-to-europe-west4.md) | Accepted | Consolidate model-server to europe-west4 (supersedes ADR-0011 regional split) |
+| [0015](adr/0015-billing-hard-cap.md) | Accepted | Billing hard-cap kill-switch via Pub/Sub + Cloud Function (GBP £500, billing-account scope) |
 
 ## ADR lifecycle
 
