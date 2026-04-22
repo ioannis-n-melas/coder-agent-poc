@@ -37,6 +37,8 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+# billing_hard_cap: generated zip artifact (content-addressed, not source)
+infra/terraform/modules/billing_hard_cap/.build/
 
 # GCP
 *-service-account.json
