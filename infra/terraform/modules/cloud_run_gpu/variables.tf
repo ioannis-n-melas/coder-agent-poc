@@ -66,6 +66,12 @@ variable "gpu_count" {
   }
 }
 
+variable "gpu_zonal_redundancy_disabled" {
+  type        = bool
+  default     = true
+  description = "Disable GPU zonal redundancy. Default true because zonal-redundant L4 quota is scarce on GCP as of 2026-04 (auto-rejected; no-zonal-redundancy quota granted instead). With this true, the GPU runs in a single zone — if that zone has an outage, the service goes down. Acceptable for single-instance scale-to-zero POC. Flip to false once zonal-redundancy quota is granted."
+}
+
 # Compute sizing
 # L4 on Cloud Run requires 8 vCPU minimum (as of 2026-04, GPU services
 # must use the matching CPU tier: 8 vCPU / 32 Gi).

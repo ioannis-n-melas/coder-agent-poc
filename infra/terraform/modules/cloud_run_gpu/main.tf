@@ -36,6 +36,17 @@ resource "google_cloud_run_v2_service" "service" {
     # EXECUTION_ENVIRONMENT_GEN2 is required for GPU on Cloud Run.
     execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
 
+    # Zonal redundancy for GPU:
+    #   Google currently (2026-04) grants zonal-redundancy L4 quota sparingly —
+    #   "not available due to high demand, coming months" per the rejection
+    #   email on the first quota request. The no-zonal-redundancy SKU was
+    #   granted instead (1x L4 in europe-west4). Set to true to use the
+    #   SKU we actually have quota for.
+    #   Trade-off: if the hosting zone has an outage, the service goes down
+    #   (no failover). Acceptable for a single-instance scale-to-zero POC.
+    #   Flip back to false once Google grants zonal-redundancy quota.
+    gpu_zonal_redundancy_disabled = var.gpu_zonal_redundancy_disabled
+
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
