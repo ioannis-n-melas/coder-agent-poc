@@ -142,6 +142,19 @@ variable "budget_alert_emails" {
   default     = []
 }
 
+# ── billing hard-cap kill-switch (ADR-0015) ──────────────────────────
+variable "billing_hard_cap_amount" {
+  description = "Monthly billing hard cap in billing_hard_cap_currency. When billing-account spend crosses this value, the kill-switch function disables billing on ALL projects attached to the billing account. Default matches the user's existing manual budget of £500."
+  type        = number
+  default     = 500
+}
+
+variable "billing_hard_cap_currency" {
+  description = "ISO 4217 currency code for billing_hard_cap_amount. Must match the currency of the GCP billing account (GBP for UK accounts)."
+  type        = string
+  default     = "GBP"
+}
+
 # ── access control ──────────────────────────────────────────────────
 variable "coder_agent_invoker_members" {
   description = "IAM members allowed to invoke the coder-agent Cloud Run service (e.g. [\"user:you@example.com\"]). Keep tight — opening to allUsers needs an ADR."
