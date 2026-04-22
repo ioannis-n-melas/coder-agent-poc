@@ -4,64 +4,72 @@
 
 ---
 
-## Current state — 2026-04-21 (post-merge + regional pivot)
+## Current state — 2026-04-22 (deployed, awaiting tool-choice rebuild)
 
 ### What's landed
 
-PRs #6–#10 merged the MVP migration cluster; PR #11 (this) adds a SESSION_HANDOVER refresh **and** the regional pivot (see ADR-0014). All services will run in `europe-west4`. **Nothing deployed to GCP yet.**
+PRs #11–#18 merged today (all admin-bypassed due to a pre-existing Python CI lint failure on main from PR #9). All three services are live in `europe-west4`.
 
 | PR | Branch | What it brought in |
 |---|---|---|
-| #6 | `docs/adr-mvp-decisions` | [ADR-0010](adr/0010-vllm-as-model-server-runtime.md) vLLM supersedes llama.cpp; [ADR-0011](adr/0011-cloud-run-l4-gpu.md) Cloud Run L4 GPU; [ADR-0012](adr/0012-reintroduce-deepagents.md) DeepAgents re-introduced; [ADR-0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md) Qwen3-Coder-30B AWQ int4. Status updates on ADR-0002/0008/0009 and [DECISIONS.md](DECISIONS.md). |
-| #7 | `chore/subagent-bash-permissions` | Orchestrator, qa-engineer, and doc-keeper background sub-agents can now run `git -C`, `git worktree`, `bash -n`, `shellcheck`. Resolves the "Sub-agent Bash permissions" deferred item from the prior block. |
-| #8 | `feat/vllm-model-server` | `services/model-server/` rewritten as a vLLM shim on a CUDA base (AWQ-Marlin, baked weights, `MAX_NUM_SEQS=4`). `infra/terraform/` adds `cloud_run_gpu` module (L4) + Cloud Build defaults for CUDA image. Updated `smoke-test.sh`, `teardown.sh`, new `setup-billing-alerts.sh` ($300/mo budget). Env vars aligned (`SERVED_MODEL_NAME` / `MAX_MODEL_LEN`). *(Originally shipped with a us-central1 regional split per ADR-0011; superseded by ADR-0014 in this PR.)* |
-| #9 | `feat/reintroduce-deepagents-clean` | `services/coder-agent/` migrated to `deepagents==0.5.3` + `langgraph>=1.1`. Plan→analyze→implement→refine subagent graph (Shape A per ADR-0012). External FastAPI API unchanged. 35 pytest cases pass (1 skipped live-model gate). ADR-0001 compliance test added. |
-| #10 | `docs/session-handover-mvp-migration` | SESSION_HANDOVER update written pre-merge; content was accurate at time of writing, became stale on merge — replaced by this block. |
-| #11 | `docs/session-handover-post-merge` | This block + [ADR-0014](adr/0014-consolidate-model-server-to-europe-west4.md) (L4 now GA in europe-west4 → consolidate `model-server` back to primary region; single AR repo; `var.model_server_region` / `GPU_AR_HOST` / `MODEL_SERVER_REGION` removed; RUNBOOK regional-split section deleted). ADR-0011's regional decision is superseded; its other decisions (L4 SKU, scale-to-zero, cold-start acceptance, GEN2 env, sizing) remain in force. |
+| #11 | `docs/session-handover-post-merge` | SESSION_HANDOVER refresh + [ADR-0014](adr/0014-consolidate-model-server-to-europe-west4.md): consolidate `model-server` to `europe-west4`; remove `var.model_server_region`; collapse second AR repo. |
+| #12 | `feat/billing-hard-cap` | [ADR-0015](adr/0015-billing-hard-cap.md) + `modules/billing_hard_cap/`: Cloud Function (Python 3.12, gen2) + Pub/Sub + billing-account-scoped budget at £500 GBP. Kill-switch deployed and armed. `DRY_RUN` env controls destructive path. |
+| #13 | `fix/model-server-cloudbuild-buildkit` | `services/model-server/cloudbuild.yaml` enabling `DOCKER_BUILDKIT=1`. Fixes latent PR #8 bug where `--mount=type=secret,id=hf_token` required BuildKit but the legacy builder was used. `build-and-push.sh` now auto-detects per-service `cloudbuild.yaml`. |
+| #14 | `fix/gpu-no-zonal-redundancy` | `modules/cloud_run_gpu`: added `gpu_zonal_redundancy_disabled=true`. GCP auto-granted only the no-zonal-redundancy L4 variant; the zonal-redundant variant was rejected for high demand. |
+| #15 | `fix/quantization-and-budget-currency` | `QUANTIZATION=compressed-tensors` on model-server (AWQ repo declares `compressed-tensors` in config.json, not `awq`). `modules/budget` now accepts a `currency` variable (default GBP — USD was rejected by GCP because billing account is GBP). |
+| #16 | `fix/probe-window-and-enforce-eager` | Startup probe `failure_threshold` 12 → 30 (360 s window). `ENFORCE_EAGER=true` on model-server to skip CUDA graph capture, which was consuming ~15–30 s and timing out the probe. |
+| #17 | `fix/max-model-len-24576` | `MAX_MODEL_LEN` 32768 → 24576. vLLM measured `3.0 GiB KV cache needed, 2.63 GiB available` at 32k; 24576 gives headroom below the ceiling. ADR-0013 updated with measured numbers. |
+| #18 | `fix/vllm-tool-choice` | `entrypoint.sh` now passes `--enable-auto-tool-choice --tool-call-parser hermes` (env-controlled via `ENABLE_TOOL_CHOICE` / `TOOL_CALL_PARSER`). Without this, vLLM returned 400 when DeepAgents sent `tool_choice=auto`. 3 new contract tests; 14/14 entrypoint tests pass. |
 
-Dead branches `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` no longer exist locally or on origin. `terraform.tfvars` exists locally (not committed) — **contains stale `us-central1` values**; re-copy from `terraform.tfvars.example` before the next apply.
+**Deployed services** (all private, scale-to-zero):
+
+| Service | URL |
+|---|---|
+| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` |
+| `model-server` | `https://model-server-5eiztln6kq-ez.a.run.app` |
+| `billing-kill-switch` | `https://billing-kill-switch-5eiztln6kq-ez.a.run.app` |
 
 ### What's in-flight / caveats
 
-- **Nothing deployed, no images pushed.** `terraform.tfvars` holds placeholder image URIs (and stale us-central1 values from before ADR-0014 — overwrite before apply). First `terraform apply` requires real digests in europe-west4 AR.
-- **L4 GPU quota not yet confirmed.** GCP Console → IAM & Admin → Quotas → "Total Nvidia L4 GPU allocation, per project per region" → `europe-west4` → at least 1. Default for new projects is 0. `europe-west4` is GA/self-serve (ADR-0014).
-- **`max_model_len=32768` is a proposal, not a measurement.** Must validate on real L4 (ADR-0013). `entrypoint.sh` exposes `MAX_MODEL_LEN` so the operator can drop to 24576 / 16384 without rebuilding.
-- **Cost envelope.** Budget alert threshold is $300/mo. L4 on Cloud Run ~$0.90/hr warm; 8 active hrs/day ≈ $220/mo.
-- **`/ready` 5 s probe timeout too tight for vLLM's 60 s cold start.** Load-bearing — must be bumped before first deploy.
+- **Cloud Build rebuilding model-server** with PR #18 tool-choice fix (background task `bc7nzpahm`). The currently deployed model-server image is pre-PR-#18 and missing the tool-choice flags. Until the new image is rolled out, `/chat` returns 400 from vLLM.
+- **After build lands**: update `terraform.tfvars` with the new model-server digest, run `terraform apply`, re-run `./scripts/smoke-test.sh`.
+- **Pre-existing Python CI lint failure on main** (from PR #9 — import-sorting + unused symbols in `services/coder-agent/src/coder_agent/agent.py`). Blocking normal merges; every PR this session required admin bypass. Needs cleanup before the next feature cycle.
+- **L4 is no-zonal-redundancy only.** GCP denied the zonal-redundant variant (high demand). Single-zone, POC-acceptable per ADR-0014. Retry guidance from GCP: "in the coming months."
 
 ### Next actions (in priority order)
 
-1. **Confirm L4 quota** in `europe-west4` is approved (GCP Console or Cloud Quotas API — `europe-west4` is self-serve per ADR-0014).
-2. **Build + push images:** `./scripts/build-and-push.sh model-server` (Cloud Build) then `./scripts/build-and-push.sh coder-agent`. Both pushes land in the single europe-west4 AR repo. Update `terraform.tfvars` with resulting digests/tags (and overwrite the stale us-central1 values in the local file).
-3. **Bump `/ready` probe timeout** on model-server Cloud Run service before applying (carried from caveats above).
-4. **Deploy:** `./scripts/deploy.sh plan` → review → `./scripts/deploy.sh apply`.
-5. **Smoke test:** `./scripts/smoke-test.sh` — expect 20–60 s first-hit latency.
-6. **Validate `max_model_len`** against real L4 VRAM; if vLLM OOMs, set `MAX_MODEL_LEN=24576` or `16384` via service env and note measurement in ADR-0013.
+1. **Wait on Cloud Build** `bc7nzpahm` to finish; update local `terraform.tfvars` with the new model-server image digest.
+2. **`./scripts/deploy.sh apply`** to roll the new model-server revision.
+3. **`./scripts/smoke-test.sh`** — full chat round-trip. Last run (pre-PR-#18): `/health` OK, `/ready` OK, `/chat` 502 (now expected to be fixed).
+4. If green: stable MVP deploy confirmed. If not: diagnose and iterate.
+5. **Fix the Python lint failure** on main to unblock normal PR merges. (`ruff check --select I services/coder-agent/src/coder_agent/agent.py` and remove unused imports.)
+6. **Zonal-redundancy L4 quota**: consider re-submitting the quota request in ~1 week.
 
 ### Deferred (not blocking MVP)
 
-- **503-during-load contract test** on model-server `/health` (qa-engineer flagged; requires mocking vLLM startup phases).
+- **503-during-load contract test** on model-server `/health` (qa-engineer; requires mocking vLLM startup phases).
 - `_GoogleIdTokenAuth` auth ADR (carried over).
-- Image-tag pinning convention (carried over).
 - `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
+- ADR-0013 language referencing 32k `max_model_len` as a proposal — update to reflect the measured 24576 ceiling (doc-keeper).
 
 ### Open questions for the next session
 
-- Warmup ping or temporary `min_instances=1` for demos (trades idle-zero for predictable first response)?
 - Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
+- Should we gate the model-server with a warmup ping to mask cold-start latency for demos?
 
 ### Cost-to-date
 
-- Zero incremental GCP cost. No deploys, no registry pushes.
-- Project at ~$0.10–$0.20/mo idle. First apply adds one ~10 GiB AR repo (~$1.00–1.50/mo) plus L4-hours once the service handles requests.
+- Idle: ~£0.10/mo (AR repo + state bucket).
+- L4 active: ~£0.72/hr (approx). Full day warm ≈ £17; POC usage 2–4 hrs/day ≈ £1.50–3.00/day.
+- Kill-switch armed at £500 GBP billing-account cap.
 
 ### Hand-off plan
 
-1. `devops-engineer` — confirm quota, run the deploy, bump `/ready` probe timeout.
-2. `qa-engineer` — 503-during-load contract test; live-model integration test wired into CI behind an env gate.
-3. `ml-engineer` — validate `max_model_len=32768` on real L4; revisit AWQ repo choice (`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit`) when an official Qwen AWQ ships.
-4. `doc-keeper` — update ADR-0013 with measured `max_model_len`; write carried-over ADRs (`_GoogleIdTokenAuth`, image-tag pinning).
-5. `orchestrator` — coordinates when the deploy hits cross-cutting trouble.
+- `devops-engineer` — complete the model-server rebuild deploy (#1–#4 above); fix lint failure (#5).
+- `qa-engineer` — 503-during-load contract test (still deferred); wire live-chat smoke test into CI behind an env gate.
+- `ml-engineer` — tune `gpu_memory_utilization` to push `MAX_MODEL_LEN` back toward 28k now that we have real measurements.
+- `doc-keeper` — update ADR-0013 to replace the 32k proposal language with measured 24576 ceiling; write carried-over `_GoogleIdTokenAuth` ADR.
+- `orchestrator` — coordinates if post-rebuild smoke test surfaces cross-cutting issues.
 
 ---
 
@@ -74,6 +82,19 @@ Dead branches `feat/cloud-run-gpu-l4` and `feat/reintroduce-deepagents` no longe
 ---
 
 ## Archive
+
+### 2026-04-21 — post-merge + regional pivot
+
+PRs #6–#10 merged the MVP migration cluster. PR #11 added a SESSION_HANDOVER refresh and [ADR-0014](adr/0014-consolidate-model-server-to-europe-west4.md) consolidating `model-server` to `europe-west4` (L4 now GA there; single AR repo; `var.model_server_region` removed). Nothing had been deployed to GCP at the close of this session. `terraform.tfvars` held stale `us-central1` values — overwritten before first apply.
+
+| PR | What it brought in |
+|---|---|
+| #6 | ADR-0010–0013 (vLLM, L4 GPU, DeepAgents, Qwen3-Coder-30B AWQ int4) |
+| #7 | Sub-agent Bash permissions (git, shellcheck) |
+| #8 | `services/model-server/` as vLLM shim; `cloud_run_gpu` Terraform module; `setup-billing-alerts.sh` |
+| #9 | `services/coder-agent/` migrated to `deepagents==0.5.3` + `langgraph>=1.1`; 35 pytest cases |
+| #10 | SESSION_HANDOVER update (pre-merge; superseded by #11) |
+| #11 | This block + ADR-0014 regional pivot |
 
 ### 2026-04-21 — POC → MVP migration (pre-merge state)
 
