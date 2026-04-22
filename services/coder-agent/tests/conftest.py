@@ -41,9 +41,7 @@ def app_client(env_model_server: None, monkeypatch: pytest.MonkeyPatch) -> Itera
             content = getattr(last, "content", None) or (
                 last.get("content", "") if isinstance(last, dict) else ""
             )
-            return {
-                "messages": [{"role": "assistant", "content": f"echo: {content}"}]
-            }
+            return {"messages": [{"role": "assistant", "content": f"echo: {content}"}]}
 
     def _fake_build(_settings: Settings) -> _FakeAgent:
         return _FakeAgent()

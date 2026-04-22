@@ -18,11 +18,11 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
 from coder_agent.config import Settings
-
 
 # ---------------------------------------------------------------------------
 # FastAPI integration: mock build_agent, exercise route logic end-to-end
@@ -126,9 +126,7 @@ def test_chat_route_preserves_request_id(
     agent_client: TestClient,
 ) -> None:
     """A caller-supplied request_id must pass through unchanged."""
-    resp = agent_client.post(
-        "/chat", json={"prompt": "test", "request_id": "integration-rid-001"}
-    )
+    resp = agent_client.post("/chat", json={"prompt": "test", "request_id": "integration-rid-001"})
     assert resp.status_code == 200
     assert resp.json()["request_id"] == "integration-rid-001"
 
@@ -164,8 +162,6 @@ def test_live_chat_roundtrip() -> None:
 
     Ensure MODEL_SERVER_URL points at a running vLLM or compatible endpoint.
     """
-    from coder_agent.config import get_settings
-    from coder_agent.agent import build_agent
     from coder_agent.main import app
 
     client = TestClient(app)

@@ -25,11 +25,10 @@ import logging
 from typing import Any
 
 import httpx
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import BaseMessage
-from langgraph.graph.state import CompiledStateGraph
 from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
+from langchain_openai import ChatOpenAI
+from langgraph.graph.state import CompiledStateGraph
 
 from coder_agent.config import Settings
 
@@ -172,9 +171,7 @@ def build_chat_model(settings: Settings) -> ChatOpenAI:
     if audience:
         auth = _GoogleIdTokenAuth(audience)
         http_client = httpx.Client(auth=auth, timeout=settings.request_timeout_seconds)
-        http_async_client = httpx.AsyncClient(
-            auth=auth, timeout=settings.request_timeout_seconds
-        )
+        http_async_client = httpx.AsyncClient(auth=auth, timeout=settings.request_timeout_seconds)
 
     return ChatOpenAI(
         model=settings.model_name,
