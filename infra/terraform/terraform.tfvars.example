@@ -15,11 +15,21 @@ coder_agent_image  = "europe-west4-docker.pkg.dev/your-project-id/coder-agent/co
 # model_server_gpu_enabled = true
 # model_server_gpu_type    = "nvidia-l4"
 
-# ── Budget ────────────────────────────────────────────────────────────
+# ── Budget (email alerts, project-scoped) ─────────────────────────────
 # GPU (L4) cost: ~$0.90/hr when warm. At 8 active hrs/day ≈ $220/mo.
 # Default is $300 — adjust once you have a real usage baseline.
 monthly_budget_usd  = 300
 budget_alert_emails = ["you@example.com"]
+
+# ── Billing hard-cap kill-switch (ADR-0015) ───────────────────────────
+# When billing-account spend crosses this amount the kill-switch Cloud
+# Function disables billing on ALL projects on the account.
+# BLAST RADIUS: every project on the billing account goes offline.
+# BEFORE APPLY: delete any manually-created UI budget at ~£500 on this
+# billing account so Terraform can own the canonical one.
+# DEFAULT: £500 GBP (matches the user's existing manual "total" budget).
+billing_hard_cap_amount   = 500
+billing_hard_cap_currency = "GBP"
 
 # ── Access control ────────────────────────────────────────────────────
 coder_agent_invoker_members = ["user:you@example.com"]

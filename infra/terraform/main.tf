@@ -113,11 +113,13 @@ module "coder_agent" {
   depends_on = [module.model_server]
 }
 
-# Budget alerts
+# Budget alerts (email-only, project-scoped)
 # GPU (L4) cost profile: ~$0.90/hr per instance when warm.
 # At 8 active hrs/day -> ~$220/mo. Budget raised to $300 to cover
 # active MVP usage with headroom. Threshold is in var.monthly_budget_usd.
 # See setup-billing-alerts.sh and modules/budget/main.tf.
+# This budget is scoped to this project and sends email alerts only.
+# It co-exists with module.billing_hard_cap (billing-account scope, kill-switch).
 module "budget" {
   source = "./modules/budget"
 
@@ -125,4 +127,33 @@ module "budget" {
   billing_account_id = var.billing_account_id
   monthly_budget_usd = var.monthly_budget_usd
   alert_emails       = var.budget_alert_emails
+}
+
+########################################################################
+# Billing hard-cap kill-switch (ADR-0015)
+#
+# Billing-account-scoped budget at var.billing_hard_cap_amount GBP.
+# When spend reaches 100% a Cloud Function (gen2) disables billing on
+# EVERY project attached to the billing account.
+#
+# BLAST RADIUS: all projects on the billing account go dark.
+# RECOVERY: gcloud billing projects link PROJECT_ID --billing-account=ACCOUNT_ID
+#
+# BEFORE FIRST APPLY: delete any manually-created UI budget named "total"
+# (or any billing-account-scoped budget at ~500 GBP) so Terraform can
+# own the canonical one without ambiguity.
+#
+# TARGETED APPLY (safe while model-server/coder-agent images are not yet
+# pushed — avoids touching Cloud Run):
+#   terraform apply -target=module.billing_hard_cap
+########################################################################
+module "billing_hard_cap" {
+  source = "./modules/billing_hard_cap"
+
+  project_id             = var.project_id
+  region                 = var.region
+  billing_account_id     = var.billing_account_id
+  budget_amount          = var.billing_hard_cap_amount
+  budget_currency_code   = var.billing_hard_cap_currency
+  kill_threshold_percent = 1.0
 }

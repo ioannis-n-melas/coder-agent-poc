@@ -46,7 +46,12 @@ gcloud services enable \
   cloudbilling.googleapis.com \
   monitoring.googleapis.com \
   logging.googleapis.com \
+  cloudfunctions.googleapis.com \
+  pubsub.googleapis.com \
+  eventarc.googleapis.com \
   --project="$GCP_PROJECT_ID"
+# cloudfunctions.googleapis.com + pubsub.googleapis.com + eventarc.googleapis.com
+# are required by the billing hard-cap kill-switch (ADR-0015).
 
 # ── Create Terraform state bucket ──────────────────────────────────
 TFSTATE_BUCKET="${GCP_PROJECT_ID}-tfstate"

@@ -69,6 +69,97 @@ Or use the console: https://console.cloud.google.com/billing
 ### Set a hard budget cap
 Terraform creates a billing budget that alerts at 50% / 90% / 100% of a configurable threshold. See [infra/terraform/modules/budget/](../infra/terraform/modules/budget/). The threshold is in `terraform.tfvars` (`monthly_budget_usd`).
 
+## Billing kill switch
+
+Implemented in `module.billing_hard_cap` ([ADR-0015](adr/0015-billing-hard-cap.md)). A Cloud Function (gen2) is triggered by a Pub/Sub notification from a billing-account-scoped budget. When billing-account spend crosses £500 (100% of `var.billing_hard_cap_amount`), the function calls `UpdateProjectBillingInfo` to disable billing on **every project attached to the billing account**.
+
+### How it behaves
+
+1. GCP sends a Pub/Sub message to `billing-hard-cap-alert` topic when spend crosses 100% of the configured amount.
+2. Cloud Functions gen2 (`billing-kill-switch`) receives the message via Eventarc.
+3. The function checks `costAmount >= budgetAmount`. If true and `DRY_RUN=false`, it lists all projects on the billing account and sets `billingEnabled=False` on each.
+4. All Cloud Run services, Cloud Functions, and other billed resources stop incurring charges within ~1 minute of billing being disabled.
+
+### Recovery after the kill switch fires
+
+Re-enable billing on each project. You can do this one of two ways:
+
+**Via `gcloud` (recommended for scripting):**
+```bash
+# List projects on the billing account to find affected ones:
+gcloud billing projects list --billing-account=XXXXXX-XXXXXX-XXXXXX
+
+# Re-enable billing on each project:
+gcloud billing projects link coder-agent-poc-2026 \
+  --billing-account=XXXXXX-XXXXXX-XXXXXX
+```
+
+**Via the Cloud Console:**
+Go to https://console.cloud.google.com/billing -> My projects -> find the project -> Actions -> Change billing -> select the billing account -> Set account.
+
+After re-enabling billing, Cloud Run services will start responding again immediately on the next request (scale-to-zero means no restart needed — they just weren't billed while billing was disabled, but they weren't deleted).
+
+**Raise the budget before re-enabling** (strongly recommended): update `billing_hard_cap_amount` in `terraform.tfvars` to a higher value and run `terraform apply -target=module.billing_hard_cap` before re-enabling billing, otherwise the function will fire again immediately on the next budget cycle evaluation.
+
+### Temporarily disabling the kill switch (for a known-expensive burst)
+
+Option 1 — raise the budget threshold:
+```bash
+# Edit infra/terraform/terraform.tfvars: set billing_hard_cap_amount = 1000
+terraform apply -target=module.billing_hard_cap
+```
+
+Option 2 — arm DRY_RUN (function logs but does not kill):
+```bash
+gcloud functions deploy billing-kill-switch \
+  --region=europe-west4 \
+  --update-env-vars=DRY_RUN=true \
+  --project=coder-agent-poc-2026
+```
+Remember to re-arm (`DRY_RUN=false`) and restore the budget when the burst is over. If you change it via `gcloud` rather than Terraform, run `terraform apply -target=module.billing_hard_cap` afterwards to reconcile state.
+
+Option 3 — pause the Pub/Sub subscription:
+The Cloud Functions gen2 Eventarc trigger uses an internal Pub/Sub subscription managed by Eventarc. Pausing it directly is not supported; use Option 1 or 2 instead.
+
+### Testing without firing the kill switch (dry-run end-to-end test)
+
+The function has a `DRY_RUN` environment variable. With `DRY_RUN=true`, it logs what it would do but does not call `UpdateProjectBillingInfo`.
+
+**Test procedure:**
+```bash
+# 1. Temporarily set DRY_RUN=true (via Terraform or gcloud, see above).
+
+# 2. Publish a crafted mock message where costAmount < budgetAmount
+#    to verify the function handles the "no action" path cleanly:
+gcloud pubsub topics publish billing-hard-cap-alert \
+  --project=coder-agent-poc-2026 \
+  --message='{"costAmount": 100, "budgetAmount": 500, "budgetDisplayName": "test", "currencyCode": "GBP"}'
+
+# 3. Confirm in Cloud Logging that the function received the message and
+#    logged "Cost is below budget. No action taken."
+
+# 4. Publish a mock message where costAmount >= budgetAmount (DRY_RUN=true,
+#    so no billing is disabled):
+gcloud pubsub topics publish billing-hard-cap-alert \
+  --project=coder-agent-poc-2026 \
+  --message='{"costAmount": 500, "budgetAmount": 500, "budgetDisplayName": "test", "currencyCode": "GBP"}'
+
+# 5. Confirm in Cloud Logging:
+#    - "KILL SWITCH TRIGGERED" is logged.
+#    - "DRY_RUN=true — would disable billing but taking no action." is logged.
+#    - Billing remains enabled on the project.
+
+# 6. Re-arm: set DRY_RUN=false.
+```
+
+Check logs:
+```bash
+gcloud functions logs read billing-kill-switch \
+  --region=europe-west4 \
+  --project=coder-agent-poc-2026 \
+  --limit=50
+```
+
 ### What costs money in this MVP
 - **Cloud Run GPU (model-server, L4)** — ~$0.90/hr per instance when warm (ADR-0011). Scale-to-zero means $0 when idle. At 8 active hrs/day × 30 days ≈ $216/mo.
 - **Cloud Run CPU (coder-agent)** — vCPU-seconds while a request is in flight. ~$0.000018/vCPU-s + memory. Scale-to-zero; idle = $0.
