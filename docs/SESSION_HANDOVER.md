@@ -4,76 +4,79 @@
 
 ---
 
-## Current state — 2026-04-22 (end of session: MVP green end-to-end)
+## Current state — 2026-04-22 (end of session: repo public + CI green)
 
 ### Headline
 
-**MVP is green.** Every smoke-test check passes, including `/chat`. Qwen3-Coder-30B-A3B-Instruct (AWQ int4) is serving real completions behind the DeepAgents graph on L4 GPU, scale-to-zero, private-only. All three deploy blockers from this session (quantization mismatch, probe window, tool-choice format, chat template) are closed.
+**Repo is public + CI is green.** Two long-standing items from the prior block are now closed:
 
-### What's landed since the prior block
+1. GitHub `refs/pull/{1..4}/head` no longer leak the GCP billing account ID — the repo was deleted and recreated from a local mirror, all PR refs scrubbed. Visibility flipped from PRIVATE to PUBLIC: <https://github.com/ioannis-n-melas/coder-agent-poc>.
+2. The Python ruff lint debt that's been admin-bypassed since PR #9 is fixed. **PR #1 on the new repo merged via normal PR flow** (`enforce_admins=true` — no admin bypass available, even for the owner).
 
-- **PR #21** (`fix/qwen3-chat-template` — merged on `main` at `9e8b4f7`, admin-bypassed): `scripts/fetch_weights.py` now overlays `chat_template` from the official `Qwen/Qwen3-Coder-30B-A3B-Instruct` repo into the AWQ `tokenizer_config.json` during image bake (Option A from the prior block). `tokenizer_config.json` promoted to a required-files sanity check. 5 new offline tests + existing 18 still passing (23 total). `TEMPLATE_HF_REPO` is overridable.
-- **Cloud Build `4c499825` finished** (25m04s). New model-server image pushed to AR: `sha256:a970828d89b06e8148a258c0fd8b4f08771a88277f3bce582a7c002af1e87794`. Local `terraform.tfvars` pinned to this digest.
-- **`terraform apply` completed** (16m39s). Same "stuck on last layer" first-time pull behaviour we'd seen before; no diagnosis needed. `model-server-00008-k7m` now serves 100% of traffic.
+MVP is still green. No deployed infra changed this session — repo recreate doesn't touch Cloud Run or Artifact Registry (images are pulled by digest).
 
-**Deployed services** (all private, scale-to-zero):
+### What landed this session
+
+- **Repo recreate (nuclear scrub).** Deleted `ioannis-n-melas/coder-agent-poc` and recreated. `main` pushed back from local clone (52 commits, oldest is `9dd0308 chore: initial commit` — the 2026-04-21 orphan-squash root). All `refs/pull/*` refs gone from `origin`. Backups: bare mirror at `/Users/ioannismelas/coder-agent-poc-prerecreate-backup` (preserves the leaked PR refs for inspection) + private archive repo `ioannis-n-melas/coder-agent-poc-archive-20260422` (main only, no PR refs).
+- **Visibility → PUBLIC.** Pre-flip scan confirmed billing ID `0095C8-E419BD-67751F` is absent from `main` HEAD tree and from every commit reachable from `main`; `.env` and `*.tfvars` (which DO contain the ID locally) are gitignored. Two stale local tags pointing at leaked commits (`backup/pre-squash-chore`, `backup/pre-squash-main`) deleted before the flip. `chore/redact-for-public-release` local branch deleted.
+- **Branch protection (re)applied + tightened.** `enforce_admins=true` (owner can't direct-push to `main`), PR required, no force-push, no deletions, `required_conversation_resolution=true`. The `restrictions` and `block_creations` fields are org-only on personal repos and silently ignored — moot since solo owner is automatically the only writer.
+- **PR #1 merged: CI lint debt cleared + docs refresh.** First PR on the new repo, no admin bypass needed. All 9 ruff errors fixed (`tests/test_agent.py` import sorting + N817 `Settings as S` rename to direct `Settings()`; `tests/test_integration.py` import sorting + unused `get_settings`/`build_agent` removal); `ruff format` on 4 files. README and ARCHITECTURE refreshed to reflect vLLM + Qwen3-Coder-30B AWQ + L4 GPU + DeepAgents + billing-kill-switch (was describing the original llama.cpp + Qwen2.5-1.5B + single-turn POC). License note updated for public visibility.
+
+**Deployed services** (unchanged — Cloud Run pulls images by digest from AR; repo recreate is independent of running infra):
 
 | Service | URL | Revision |
 |---|---|---|
-| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` | (unchanged from prior block) |
+| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` | (unchanged) |
 | `model-server` | `https://model-server-5eiztln6kq-ez.a.run.app` | `model-server-00008-k7m` |
 | `billing-kill-switch` | `https://billing-kill-switch-5eiztln6kq-ez.a.run.app` | (unchanged) |
 
-### Smoke test result (`./scripts/smoke-test.sh`)
+### Smoke test result
 
-| Check | Result |
-|---|---|
-| model-server `/health` | OK |
-| coder-agent `/health` | OK |
-| coder-agent `/ready` (`model_server_reachable: true`) | OK |
-| coder-agent `/chat` (prompt: "write a hello world in python") | **200 — 36 bytes, valid Python code fence** |
-
-End-to-end path verified: agent → vLLM → AWQ model → chat completion → agent response.
+Not re-run this session (no infra changes). Last green run is in the prior block — end-to-end path remains verified.
 
 ### What's in-flight / caveats
 
-- **Pre-existing Python CI lint failure on main** (PR #9 inheritance — import-sorting + unused symbols in `services/coder-agent/src/coder_agent/agent.py`). Every PR this session was admin-bypassed. **This is now the top non-feature debt** — once cleared, normal PR flow returns.
 - **L4 is no-zonal-redundancy only.** GCP denied the zonal-redundant variant. Single-zone, POC-acceptable per ADR-0014. Quota retry scheduled ~1 week out.
-- **`smoke-test.sh` cosmetic bug**: `/ready` prints both the correct JSON (`"model_server_reachable":true`) and a misleading `WARNING: model-server not reachable`. Check logic appears inverted. Not blocking — script exits 0 — but the log line confuses. Fix is a two-line script edit when someone has 5 min.
-- **Stale local branch** `chore/redact-for-public-release` — billing ID in history, remote gone, safe to delete (carried over).
-- **GitHub `refs/pull/{1..4}/head`** still leak billing ID from the pre-2026-04-21 orphan-squash era. Documented plan exists for a nuclear delete + recreate; not in-repo (carried over).
+- **`smoke-test.sh` cosmetic bug**: `/ready` prints both the correct JSON (`"model_server_reachable":true`) and a misleading `WARNING: model-server not reachable`. Check logic appears inverted. Not blocking — script exits 0 — but the log line confuses. Two-line script edit when someone has 5 min.
+- **Backups still live.** Bare mirror at `/Users/ioannismelas/coder-agent-poc-prerecreate-backup` + private archive `ioannis-n-melas/coder-agent-poc-archive-20260422`. Delete when you're confident the recreate didn't lose anything important (~1 week out).
 
-### Deferred (not blocking MVP — and MVP is now green)
+### Deferred (not blocking)
 
 - **503-during-load contract test** on model-server `/health` (qa-engineer; requires mocking vLLM startup phases).
 - `_GoogleIdTokenAuth` auth ADR (carried over).
 - `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
-- **Live-chat smoke check in CI** behind an env gate (now that we have a working `/chat`, this is worth wiring — qa-engineer).
+- **Live-chat smoke check in CI** behind an env gate (carried over; now actually doable — base path works).
 
 ### Open questions for the next session
 
-- MVP is green — **what's the next feature?** Tool-use (file read/write, shell) stacked on the DeepAgents graph, or stabilize single-turn-with-planning first? (Carried over from prior block; now actually decidable because the base path works.)
+- MVP is green and the repo is public — **what's the next feature?** Tool-use (file read/write, shell) on the DeepAgents graph, or stabilize single-turn-with-planning first? (Carried over.)
 - Warmup ping to mask cold-start latency for demos — still open.
-- Should we promote ADR-0013 with a status note about the AWQ-repo chat-template stripping? It's now documented in `fetch_weights.py` and PR #21, but a one-paragraph ADR addendum would future-proof it against the community repo being "fixed" upstream (which would make the overlay a no-op — which the code already handles).
+- Now that the repo is public, do we want a top-level `LICENSE` file? README currently says "no license file is committed; default copyright applies." (New question.)
 
 ### Cost-to-date
 
 - Idle: ~£0.10/mo (AR repo + state bucket).
 - L4 active: ~£0.72/hr (approx). Full day warm ≈ £17; POC usage 2–4 hrs/day ≈ £1.50–3.00/day.
 - Kill-switch armed at £500 GBP billing-account cap.
-- Cloud Build this session: ~25 min added (one build). AR storage added: ~15 GiB (one new image replacing `sha256:5379d924…`).
+- This session: zero new GCP spend (no rebuilds, no `terraform apply`). One archive GitHub repo created (free; private).
 
 ### Hand-off plan
 
-- **`devops-engineer`** — **priority 1**: fix Python CI lint failure on main so PRs stop needing admin bypass. Work is known: import-sorting + unused-symbol cleanup in `services/coder-agent/src/coder_agent/agent.py`.
-- `ml-engineer` — next-feature scoping (tool-use vs planning stabilization) on the DeepAgents graph; optional ADR-0013 status addendum.
+- **All session-priority items closed.** Next session can start a feature.
+- `ml-engineer` — next-feature scoping (tool-use vs planning stabilization) on the DeepAgents graph.
 - `qa-engineer` — 503-during-load contract test (deferred); wire live-chat smoke test into CI behind an env gate.
-- `doc-keeper` — write carried-over `_GoogleIdTokenAuth` ADR.
-- `orchestrator` — coordinates if the next feature cycle spans multiple services.
+- `doc-keeper` — write carried-over `_GoogleIdTokenAuth` ADR; consider LICENSE-file ADR for the public repo.
+- `devops-engineer` — fix `smoke-test.sh` cosmetic bug; quota retry for L4 zonal redundancy.
 
 ---
 
 ## Archive
+
+### 2026-04-22 — MVP green end-to-end (chat_template fix)
+
+PR #21 (`fix/qwen3-chat-template`) landed: `scripts/fetch_weights.py` overlays `chat_template` from the official `Qwen/Qwen3-Coder-30B-A3B-Instruct` repo into the AWQ `tokenizer_config.json` at image bake (`TEMPLATE_HF_REPO` overridable). `tokenizer_config.json` promoted to a required-files sanity check. 23 offline tests pass. Cloud Build `4c499825` (25m04s) produced `sha256:a970828d…`; `terraform apply` (16m39s) deployed `model-server-00008-k7m` at 100% traffic. Smoke test green end-to-end including `/chat` (200, valid Python code fence). Four deploy blockers from the prior block (quantization, probe window, tool-choice, chat template) all closed.
+
+Open at close (carried into next block, all resolved this session): Python CI lint failure on main (PR #9 inheritance — every PR this session was admin-bypassed); stale local branch `chore/redact-for-public-release`; `refs/pull/{1..4}/head` still leaking billing ID. Carried-over operational caveats: L4 no-zonal-redundancy only; `smoke-test.sh` `/ready` cosmetic warning.
 
 ### 2026-04-22 — deployed, chat_template blocker (pre-PR-#21)
 
