@@ -38,7 +38,7 @@ Key reasons:
 Specifics:
 - Model: `Qwen/Qwen3-Coder-30B-A3B-Instruct` (AWQ int4 variant from HuggingFace).
 - Quantization: AWQ int4, loaded via `--quantization awq` in vLLM.
-- Proposed `max_model_len`: 32768. **This must be validated by ml-engineer against measured KV cache use before deployment** — if KV cache at 32K exceeds available VRAM headroom (~6–8 GB), reduce to 16384 or 24576.
+- Proposed `max_model_len`: 32768. **Measured on real L4 (2026-04-22)**: 32K fails with `KV cache needs 3.0 GiB, available 2.63 GiB. Estimated max is 28672.` With `ENFORCE_EAGER=true` (no CUDA graph buffers) and `gpu_memory_utilization=0.90`, the effective ceiling is ~28K. **Set `MAX_MODEL_LEN=24576`** in root `main.tf` to give headroom against driver/weight version drift. Revisit if real request-length distribution justifies pushing closer to the ceiling (or if `gpu_memory_utilization` is tuned up).
 - AWQ quality note: int4 AWQ loses some precision vs BF16. Acceptable for coding tasks; if quality on a specific task class is insufficient, consider GPTQ or a larger active-parameter model.
 
 ## Consequences

@@ -73,10 +73,14 @@ module "model_server" {
     # (coder-agent/src/coder_agent/config.py). Both sides default to the
     # full HF id; mismatch causes vLLM to 404 /v1/chat/completions.
     SERVED_MODEL_NAME = "Qwen/Qwen3-Coder-30B-A3B-Instruct"
-    # max_model_len must be validated by ml-engineer on real L4 before deploy
-    # (ADR-0013). Default 32768 -- reduce to 16384 or 24576 if KV cache
-    # exceeds VRAM headroom.
-    MAX_MODEL_LEN = "32768"
+    # MAX_MODEL_LEN measured 2026-04-22 on real L4 (24 GiB VRAM):
+    # 32768 fails with "KV cache needs 3.0 GiB, available 2.63 GiB.
+    # Estimated max model length is 28672." 24576 gives headroom vs
+    # vLLM's 28672 recommendation — safer against minor weight/driver
+    # version drift. Trade-off: long-context tasks (>24k tokens) get
+    # truncated. Revisit when we measure real request-length distribution.
+    # ADR-0013 updated with measured values.
+    MAX_MODEL_LEN = "24576"
     # The cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit repo (ADR-0013) stores
     # its AWQ int4 weights under the compressed-tensors container format; its
     # config.json declares quantization_method=compressed-tensors. vLLM refuses
