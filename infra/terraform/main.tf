@@ -55,11 +55,16 @@ module "model_server" {
   concurrency     = var.model_server_concurrency
   timeout_seconds = var.model_server_timeout_seconds
 
-  # vLLM cold start: CUDA init + AWQ model load + warmup ~20-60s (ADR-0011).
-  # initial_delay=60 + period=10 * failure_threshold=12 -> up to 180s total probe window.
+  # vLLM cold start on L4 (measured 2026-04-22 from first deploy attempt):
+  #   CUDA init ~30s + weight load ~60s + model_runner init ~30s + graph
+  #   capture (when enabled) ~30-60s + uvicorn bind ~5s. Total worst-case
+  #   ~3 min. We use ENFORCE_EAGER=true (see env below) to skip graph
+  #   capture — cuts cold start to ~2 min and frees ~1-2 GiB for KV cache.
+  # initial_delay=60 + period=10 * failure_threshold=30 -> up to 360s probe window.
+  # Extra margin is cheap (probes only run until first success).
   startup_probe_initial_delay     = 60
   startup_probe_period            = 10
-  startup_probe_failure_threshold = 12
+  startup_probe_failure_threshold = 30
   startup_probe_timeout           = 10
 
   env = {
@@ -80,6 +85,12 @@ module "model_server" {
     # routes W4A16 weights to the Marlin kernel on SM89+ — no perf loss.
     # Flip back to awq_marlin if we ever switch to a plain-AWQ repo.
     QUANTIZATION = "compressed-tensors"
+    # Skip CUDA graph capture to cut cold-start time by ~30-60s. With
+    # scale-to-zero every request risks a cold start, so faster boot
+    # beats the ~10-20% steady-state throughput gain from graphs.
+    # Revisit once we benchmark real agent loops and measure whether
+    # throughput regression materially matters (RUNBOOK > Cold start).
+    ENFORCE_EAGER = "true"
   }
 
   # Only the coder-agent SA can invoke (CLAUDE.md s3.4 -- no allUsers without ADR).
