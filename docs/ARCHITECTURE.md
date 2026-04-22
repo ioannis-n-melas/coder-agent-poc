@@ -2,36 +2,40 @@
 
 ## Components
 
-### model-server (Cloud Run)
-- Runtime: **llama.cpp** (`ghcr.io/ggml-org/llama.cpp:server`).
-- Model: **Qwen2.5-Coder-1.5B-Instruct**, quantized to **Q4_K_M** GGUF (~1 GB).
-- Exposes an **OpenAI-compatible** API on `/v1/chat/completions` and `/v1/completions`.
-- Sizing (POC): 2 vCPU, 4 GiB memory, `min_instances=0`, `max_instances=2`.
-- Cold start: ~5–15 s to mmap the model.
+### model-server (Cloud Run, GPU)
+- Runtime: **vLLM** (see [ADR 0010](adr/0010-vllm-as-model-server-runtime.md)).
+- Model: **Qwen3-Coder-30B-A3B-Instruct**, **AWQ int4** quantization (~16–18 GB weights). See [ADR 0013](adr/0013-qwen3-coder-30b-a3b-instruct-model.md). The AWQ tokenizer ships without a `chat_template`, so `scripts/fetch_weights.py` overlays the official template at image bake time.
+- Exposes an **OpenAI-compatible** API on `/v1/chat/completions` and `/v1/completions`, with auto tool-choice + Hermes parser enabled (`--enable-auto-tool-choice --tool-call-parser hermes`).
+- Sizing: **8 vCPU**, **32 GiB memory**, **NVIDIA L4 GPU** (no zonal redundancy — see [ADR 0011](adr/0011-cloud-run-l4-gpu.md) and [ADR 0014](adr/0014-consolidate-model-server-to-europe-west4.md)). `min_instances=0`, `max_instances=1`. See `infra/terraform/variables.tf` for current defaults.
+- Cold start: ~20–60 s for vLLM warmup + AWQ weight load on L4 (`startup_cpu_boost=true`, `enforce_eager=true` to skip CUDA-graph capture).
 - Auth: Cloud Run IAM — only the `coder-agent` service account can invoke.
 
 ### coder-agent (Cloud Run)
-- Runtime: **Python 3.12** + **FastAPI** + **langchain-openai** (single-turn chat loop for Phase 1 — see [ADR 0009](adr/0009-strip-deepagents-for-poc-chat.md); DeepAgents is slated to return with tool use).
-- Points at `model-server` URL via env var; uses `langchain-openai` client against the OpenAI-compatible endpoint.
-- Exposes `/chat` (single-turn JSON `{request_id, output}`), `/health`, `/ready`.
-- Sizing (POC): 1 vCPU, 1 GiB memory, `min_instances=0`, `max_instances=3`.
-- Auth: inbound via ID-token; outbound (to private model-server) via Google-minted ID token attached by a custom `_GoogleIdTokenAuth` httpx auth class wired into the LangChain `ChatOpenAI` client.
+- Runtime: **Python 3.12** + **FastAPI** + **DeepAgents** over LangChain (`langchain-openai` `ChatOpenAI` for the model client). See [ADR 0012](adr/0012-reintroduce-deepagents.md).
+- Drives a planner/refine graph against the OpenAI-compatible model endpoint. `MODEL_SERVER_URL` is the only env knob the agent uses to find the model.
+- Exposes `/chat` (`{request_id, output}`), `/health`, `/ready`.
+- Sizing: see `infra/terraform/variables.tf` (`coder_agent_cpu` / `coder_agent_memory`). `min_instances=0`.
+- Auth: inbound via Cloud Run ID-token; outbound (to private model-server) via Google-minted ID token attached by a custom `_GoogleIdTokenAuth` httpx auth class wired into `ChatOpenAI`.
+
+### billing-kill-switch (Cloud Function gen2 → Cloud Run)
+- Subscribes to a Pub/Sub topic fed by a billing-account-scoped budget. When the project crosses the cap (£500 GBP), it disables billing on the project. See [ADR 0015](adr/0015-billing-hard-cap.md).
+- `DRY_RUN=true` by default; flip to `false` once you're comfortable with the destructive path.
 
 ### Supporting GCP resources
 | Resource | Purpose |
 |---|---|
 | **Artifact Registry** (`europe-west4`) | Docker images for both services. |
-| **Secret Manager** | Any future API keys / tokens. Empty at POC. |
+| **Secret Manager** | API keys / tokens (e.g. HF token used at image bake). |
 | **Cloud Storage bucket** (`<project>-tfstate`) | Terraform remote state. |
 | **Cloud Storage bucket** (`<project>-artifacts`) | Agent run artifacts, generated code, traces. |
 | **Service accounts** | Per-service, least-privilege. `coder-agent-sa` can invoke `model-server`. |
 
-## Request flow (chat — Phase 1, single-turn)
+## Request flow (chat)
 
 ```
  Client ──ID-token──▶ coder-agent (/chat)
                         │
-                        ▶ ChatAgent (single-turn)
+                        ▶ DeepAgents graph (planner / refine)
                            └─ langchain-openai AsyncClient
                                 + _GoogleIdTokenAuth (audience = model-server URL)
                                        │
@@ -39,12 +43,8 @@
                                 model-server /v1/chat/completions
                                        │
                                        ▼
-                                 llama.cpp + Qwen (Q4 GGUF)
+                                vLLM + Qwen3-Coder-30B-A3B (AWQ int4) on L4
 ```
-
-Phase 2 will reintroduce a graph (plan / analyze / implement / refine) once
-we pair with a runtime that handles OpenAI tool-calling cleanly. See
-[ADR 0009](adr/0009-strip-deepagents-for-poc-chat.md).
 
 ## Phase 2 migration (GKE + KServe)
 
