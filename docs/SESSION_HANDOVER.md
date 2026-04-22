@@ -4,22 +4,25 @@
 
 ---
 
-## Current state — 2026-04-22 (end of session: deployed + chat_template blocker)
+## Current state — 2026-04-22 (end of session: MVP green end-to-end)
+
+### Headline
+
+**MVP is green.** Every smoke-test check passes, including `/chat`. Qwen3-Coder-30B-A3B-Instruct (AWQ int4) is serving real completions behind the DeepAgents graph on L4 GPU, scale-to-zero, private-only. All three deploy blockers from this session (quantization mismatch, probe window, tool-choice format, chat template) are closed.
 
 ### What's landed since the prior block
 
-- **PR #19** (SESSION_HANDOVER refresh — merged on `main` at `5e62a22`): the prior block captured the mid-session state.
-- **Cloud Build `ed6cfba3` finished** (23m01s). New model-server image pushed to AR:
-  `sha256:5379d924e91a1cf3258f82ce29067511826713aa0fe986a9eca8f69f425bc0e7`. Local `terraform.tfvars` pinned to this digest.
-- **`terraform apply` completed** (17m39s). First-time pull of the new ~17 GiB image — layer cache cold because digest changed. `model-server-00007-hrs` now serves 100% of traffic with the tool-choice fix active.
+- **PR #21** (`fix/qwen3-chat-template` — merged on `main` at `9e8b4f7`, admin-bypassed): `scripts/fetch_weights.py` now overlays `chat_template` from the official `Qwen/Qwen3-Coder-30B-A3B-Instruct` repo into the AWQ `tokenizer_config.json` during image bake (Option A from the prior block). `tokenizer_config.json` promoted to a required-files sanity check. 5 new offline tests + existing 18 still passing (23 total). `TEMPLATE_HF_REPO` is overridable.
+- **Cloud Build `4c499825` finished** (25m04s). New model-server image pushed to AR: `sha256:a970828d89b06e8148a258c0fd8b4f08771a88277f3bce582a7c002af1e87794`. Local `terraform.tfvars` pinned to this digest.
+- **`terraform apply` completed** (16m39s). Same "stuck on last layer" first-time pull behaviour we'd seen before; no diagnosis needed. `model-server-00008-k7m` now serves 100% of traffic.
 
 **Deployed services** (all private, scale-to-zero):
 
-| Service | URL |
-|---|---|
-| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` |
-| `model-server` | `https://model-server-5eiztln6kq-ez.a.run.app` |
-| `billing-kill-switch` | `https://billing-kill-switch-5eiztln6kq-ez.a.run.app` |
+| Service | URL | Revision |
+|---|---|---|
+| `coder-agent` | `https://coder-agent-5eiztln6kq-ez.a.run.app` | (unchanged from prior block) |
+| `model-server` | `https://model-server-5eiztln6kq-ez.a.run.app` | `model-server-00008-k7m` |
+| `billing-kill-switch` | `https://billing-kill-switch-5eiztln6kq-ez.a.run.app` | (unchanged) |
 
 ### Smoke test result (`./scripts/smoke-test.sh`)
 
@@ -28,63 +31,53 @@
 | model-server `/health` | OK |
 | coder-agent `/health` | OK |
 | coder-agent `/ready` (`model_server_reachable: true`) | OK |
-| coder-agent `/chat` | **502** |
+| coder-agent `/chat` (prompt: "write a hello world in python") | **200 — 36 bytes, valid Python code fence** |
 
-### Blocker — next-session priority 1
-
-**Chat template missing from AWQ tokenizer.**
-
-vLLM now accepts `tool_choice=auto` (PR #18 fix verified). A new error surfaced from the tokenizer on the first real `/chat` call:
-
-> `'As of transformers v4.44, default chat template is no longer allowed, so you must provide a chat template if the tokenizer does not define one.'`
-
-`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit` community repo's `tokenizer_config.json` does not ship a `chat_template` field. vLLM refuses to format messages without one.
-
-**Three fix options** (most to least recommended):
-
-| Option | Approach | Rebuild cost | Notes |
-|---|---|---|---|
-| **A (recommended)** | Update `services/model-server/scripts/fetch_weights.py` to also pull `tokenizer_config.json` (or `chat_template.jinja`) from `Qwen/Qwen3-Coder-30B-A3B-Instruct` official repo and overlay onto the AWQ weight dir. | One Cloud Build + apply cycle | Minimal code change; keeps template coupled to weights; self-contained. |
-| **B** | Pass `--chat-template <path>` to vLLM in `entrypoint.sh`; bake template file at a known location in the image. | One Cloud Build + apply cycle | Slightly more brittle — decouples template from weights. |
-| **C** | Switch AWQ repo to one that ships the template. | Research + one Cloud Build + apply cycle | Biggest change; needs research on available AWQ variants for Qwen3-Coder-30B-A3B-Instruct. |
+End-to-end path verified: agent → vLLM → AWQ model → chat completion → agent response.
 
 ### What's in-flight / caveats
 
-- **Pre-existing Python CI lint failure on main** (PR #9 — import-sorting + unused symbols in `services/coder-agent/src/coder_agent/agent.py`). Every PR this session required admin bypass. Needs cleanup before the next feature cycle.
-- **L4 is no-zonal-redundancy only.** GCP denied the zonal-redundant variant. Single-zone, POC-acceptable per ADR-0014. Quota retry scheduled for ~1 week out.
-- **Stale local branch** `chore/redact-for-public-release` — billing ID in history, remote gone, safe to delete.
-- **GitHub `refs/pull/{1..4}/head`** still leak billing ID from pre-2026-04-21 orphan-squash era. Documented plan for a future session (nuclear delete + recreate); not in-repo.
+- **Pre-existing Python CI lint failure on main** (PR #9 inheritance — import-sorting + unused symbols in `services/coder-agent/src/coder_agent/agent.py`). Every PR this session was admin-bypassed. **This is now the top non-feature debt** — once cleared, normal PR flow returns.
+- **L4 is no-zonal-redundancy only.** GCP denied the zonal-redundant variant. Single-zone, POC-acceptable per ADR-0014. Quota retry scheduled ~1 week out.
+- **`smoke-test.sh` cosmetic bug**: `/ready` prints both the correct JSON (`"model_server_reachable":true`) and a misleading `WARNING: model-server not reachable`. Check logic appears inverted. Not blocking — script exits 0 — but the log line confuses. Fix is a two-line script edit when someone has 5 min.
+- **Stale local branch** `chore/redact-for-public-release` — billing ID in history, remote gone, safe to delete (carried over).
+- **GitHub `refs/pull/{1..4}/head`** still leak billing ID from the pre-2026-04-21 orphan-squash era. Documented plan exists for a nuclear delete + recreate; not in-repo (carried over).
 
-### Deferred (not blocking MVP)
+### Deferred (not blocking MVP — and MVP is now green)
 
 - **503-during-load contract test** on model-server `/health` (qa-engineer; requires mocking vLLM startup phases).
 - `_GoogleIdTokenAuth` auth ADR (carried over).
 - `pythonjsonlogger.jsonlogger` deprecation warning (carried over — trivial).
+- **Live-chat smoke check in CI** behind an env gate (now that we have a working `/chat`, this is worth wiring — qa-engineer).
 
 ### Open questions for the next session
 
-- Is tool-use (file read/write, shell) the next feature on top of the DeepAgents graph, or do we stabilize single-turn-with-planning first?
-- Should we gate the model-server with a warmup ping to mask cold-start latency for demos?
-- Option A vs B for the chat-template fix: is keeping the template coupled to the weight dir important, or is a separate baked-in template file acceptable?
+- MVP is green — **what's the next feature?** Tool-use (file read/write, shell) stacked on the DeepAgents graph, or stabilize single-turn-with-planning first? (Carried over from prior block; now actually decidable because the base path works.)
+- Warmup ping to mask cold-start latency for demos — still open.
+- Should we promote ADR-0013 with a status note about the AWQ-repo chat-template stripping? It's now documented in `fetch_weights.py` and PR #21, but a one-paragraph ADR addendum would future-proof it against the community repo being "fixed" upstream (which would make the overlay a no-op — which the code already handles).
 
 ### Cost-to-date
 
 - Idle: ~£0.10/mo (AR repo + state bucket).
 - L4 active: ~£0.72/hr (approx). Full day warm ≈ £17; POC usage 2–4 hrs/day ≈ £1.50–3.00/day.
 - Kill-switch armed at £500 GBP billing-account cap.
-- Cloud Build this session: ~46 min total (two builds). AR storage added: ~15 GiB (one new image; PR #18 replaced the prior digest).
+- Cloud Build this session: ~25 min added (one build). AR storage added: ~15 GiB (one new image replacing `sha256:5379d924…`).
 
 ### Hand-off plan
 
-- `ml-engineer` — owns chat-template fix (options A/B/C above); primary next action.
-- `devops-engineer` — fix Python lint failure on main to unblock normal PR merges.
+- **`devops-engineer`** — **priority 1**: fix Python CI lint failure on main so PRs stop needing admin bypass. Work is known: import-sorting + unused-symbol cleanup in `services/coder-agent/src/coder_agent/agent.py`.
+- `ml-engineer` — next-feature scoping (tool-use vs planning stabilization) on the DeepAgents graph; optional ADR-0013 status addendum.
 - `qa-engineer` — 503-during-load contract test (deferred); wire live-chat smoke test into CI behind an env gate.
 - `doc-keeper` — write carried-over `_GoogleIdTokenAuth` ADR.
-- `orchestrator` — coordinates if post-fix smoke test surfaces cross-cutting issues.
+- `orchestrator` — coordinates if the next feature cycle spans multiple services.
 
 ---
 
 ## Archive
+
+### 2026-04-22 — deployed, chat_template blocker (pre-PR-#21)
+
+Rev 00007 (`sha256:5379d924…`) was live with the tool-choice fix (PR #18) but `/chat` 502'd because the AWQ tokenizer shipped without `chat_template`. Fix options A/B/C were laid out; Option A was chosen and landed as PR #21 → rev 00008 (see current block).
 
 ### 2026-04-22 — deployed, awaiting tool-choice rebuild
 
