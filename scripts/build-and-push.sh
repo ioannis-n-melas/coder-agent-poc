@@ -82,6 +82,7 @@ build_push_cloud_build() {
   local svc="$1" version="$2" registry_host="$3"
   local ctx="$REPO_ROOT/services/$svc"
   local image_uri="${registry_host}/${GCP_PROJECT_ID}/${AR_REPO}/${svc}"
+  local cloudbuild_yaml="$ctx/cloudbuild.yaml"
 
   echo ""
   echo "── $svc (Cloud Build) ────────────────────────────────────────"
@@ -91,12 +92,25 @@ build_push_cloud_build() {
   echo "NOTE: Cloud Build charges ~\$0.003/min (n1-highcpu-8). Large CUDA"
   echo "      images take 10-20 min ~\$0.05-0.10 per build."
 
-  gcloud builds submit \
-    --project="${GCP_PROJECT_ID}" \
-    --region="${CLOUD_BUILD_REGION:-europe-west4}" \
-    --tag="${image_uri}:${version}" \
-    --tag="${image_uri}:sha-${GIT_SHA}${DIRTY_SUFFIX}" \
-    "$ctx"
+  if [[ -f "$cloudbuild_yaml" ]]; then
+    # Service has its own cloudbuild.yaml — use it (needed for BuildKit,
+    # e.g. when the Dockerfile uses --mount=type=secret).
+    echo "config   : services/$svc/cloudbuild.yaml (BuildKit)"
+    gcloud builds submit \
+      --project="${GCP_PROJECT_ID}" \
+      --region="${CLOUD_BUILD_REGION:-europe-west4}" \
+      --config="$cloudbuild_yaml" \
+      --substitutions="_IMAGE=${image_uri},_VERSION=${version},_GIT_SHA=${GIT_SHA}${DIRTY_SUFFIX}" \
+      "$ctx"
+  else
+    # Simple Dockerfiles without BuildKit features — use --tag shortcut.
+    gcloud builds submit \
+      --project="${GCP_PROJECT_ID}" \
+      --region="${CLOUD_BUILD_REGION:-europe-west4}" \
+      --tag="${image_uri}:${version}" \
+      --tag="${image_uri}:sha-${GIT_SHA}${DIRTY_SUFFIX}" \
+      "$ctx"
+  fi
 
   echo "  pushed ${image_uri}:${version}"
   echo "  pushed ${image_uri}:sha-${GIT_SHA}${DIRTY_SUFFIX}"

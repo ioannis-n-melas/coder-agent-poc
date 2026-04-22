@@ -1,0 +1,43 @@
+# Cloud Build config for model-server.
+#
+# Required because the Dockerfile uses `--mount=type=secret,id=hf_token` to
+# optionally inject HF_TOKEN at weight-fetch time, which needs BuildKit.
+# `gcloud builds submit --tag` uses a legacy builder with BuildKit disabled,
+# so the shortcut path fails at the --mount step. This config enables
+# BuildKit explicitly via DOCKER_BUILDKIT=1.
+#
+# Invoked by scripts/build-and-push.sh when model-server/cloudbuild.yaml
+# exists. Substitutions are supplied by the script:
+#   _IMAGE    = <registry>/<project>/<repo>/model-server
+#   _VERSION  = vX.Y.Z tag
+#   _GIT_SHA  = short git SHA (optionally with -dirty suffix)
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - -t
+      - ${_IMAGE}:${_VERSION}
+      - -t
+      - ${_IMAGE}:sha-${_GIT_SHA}
+      - -f
+      - Dockerfile
+      - .
+
+images:
+  - ${_IMAGE}:${_VERSION}
+  - ${_IMAGE}:sha-${_GIT_SHA}
+
+substitutions:
+  _IMAGE: ""
+  _VERSION: ""
+  _GIT_SHA: ""
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+# vLLM CUDA base + ~17 GiB weight fetch can exceed the default 10 min timeout.
+timeout: 1800s
