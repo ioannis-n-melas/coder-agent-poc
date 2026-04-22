@@ -19,13 +19,13 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from coder_agent.agent import (
+    _MAX_REFINE_ITERATIONS,
+    _ORCHESTRATOR_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     ChatAgent,
     DeepAgentWrapper,
-    _GoogleIdTokenAuth,
-    _MAX_REFINE_ITERATIONS,
-    _ORCHESTRATOR_SYSTEM_PROMPT,
     _build_subagents,
+    _GoogleIdTokenAuth,
     build_agent,
     build_chat_model,
 )
@@ -64,9 +64,7 @@ def test_chat_model_base_url_is_from_settings_not_hardcoded(
 ) -> None:
     """The base_url must come from config, not be hardcoded in agent.py."""
     monkeypatch.setenv("MODEL_SERVER_URL", "http://env-injected-host:9999")
-    from coder_agent.config import Settings as S
-
-    s = S()  # type: ignore[call-arg]
+    s = Settings()  # type: ignore[call-arg]
     model = build_chat_model(s)
     # Confirm the SDK will target env-injected-host:9999
     config_dump = getattr(model, "model_dump", lambda: {})() or {}
@@ -77,10 +75,7 @@ def test_chat_model_base_url_is_from_settings_not_hardcoded(
     )
     assert "env-injected-host:9999" in str(base) or "env-injected-host:9999" in str(
         getattr(model, "root_async_client", "")
-    ), (
-        f"base_url must track MODEL_SERVER_URL env var; "
-        f"got {base!r} for host env-injected-host:9999"
-    )
+    ), f"base_url must track MODEL_SERVER_URL env var; got {base!r} for host env-injected-host:9999"
 
 
 def test_chat_model_uses_configured_temperature() -> None:
@@ -155,9 +150,7 @@ def test_chat_model_attaches_id_token_auth_when_audience_set() -> None:
             if c is None:
                 continue
             inner = getattr(c, "_client", None)
-            if inner is not None and isinstance(
-                getattr(inner, "_auth", None), _GoogleIdTokenAuth
-            ):
+            if inner is not None and isinstance(getattr(inner, "_auth", None), _GoogleIdTokenAuth):
                 found = True
                 break
     assert found, "expected _GoogleIdTokenAuth to be attached to the OpenAI SDK httpx client"
@@ -191,16 +184,10 @@ async def test_deep_agent_wrapper_ainvoke_returns_messages() -> None:
 async def test_planner_response_is_non_empty_for_simple_input() -> None:
     """Planner stage: for any non-trivial prompt the orchestrator must produce content."""
     plan_text = (
-        "Plan:\n"
-        "1. Read hello.py\n"
-        "2. Implement greet() function\n"
-        "3. Run tests\n"
-        "4. Refine if needed"
+        "Plan:\n1. Read hello.py\n2. Implement greet() function\n3. Run tests\n4. Refine if needed"
     )
     stub_graph = MagicMock()
-    stub_graph.ainvoke = AsyncMock(
-        return_value={"messages": [AIMessage(content=plan_text)]}
-    )
+    stub_graph.ainvoke = AsyncMock(return_value={"messages": [AIMessage(content=plan_text)]})
 
     wrapper = DeepAgentWrapper(graph=stub_graph)
     result = await wrapper.ainvoke(

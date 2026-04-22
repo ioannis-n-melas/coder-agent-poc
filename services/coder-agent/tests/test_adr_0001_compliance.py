@@ -14,7 +14,6 @@ from __future__ import annotations
 import importlib
 import sys
 
-
 _FORBIDDEN_PREFIXES: tuple[str, ...] = ("vllm", "llama_cpp", "llamacpp")
 
 
