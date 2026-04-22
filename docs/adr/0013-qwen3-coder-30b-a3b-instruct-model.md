@@ -52,6 +52,20 @@ Specifics:
 - **Bad**: per-request token cost is higher than the POC model when the service is warm. Each planning + tool-calling round trip will involve significantly more tokens than a single-turn chat.
 - **Trigger to revisit**: (a) AWQ int4 quality is insufficient for a real coding task class — try GPTQ or a different quantization, (b) a new model is released that fits on L4 and materially improves agentic coding quality, (c) VRAM pressure forces `max_model_len` below 16K — reassess whether a smaller but denser model is a better fit.
 
+## Status notes
+
+### 2026-04-22 — AWQ source repo & chat_template overlay
+
+The original decision named *"AWQ int4 variant from HuggingFace"* without pinning the upstream. In practice no official `Qwen/*-AWQ` build exists for this model, so the image bakes weights from the community repo **`cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit`** (default for `MODEL_HF_REPO` in [`services/model-server/scripts/fetch_weights.py`](../../services/model-server/scripts/fetch_weights.py)).
+
+That repo ships a `tokenizer_config.json` **without a `chat_template` field** — stripped during quantization. Under `transformers ≥ 4.44`, vLLM then refuses to format messages and `/chat` fails with:
+
+> `As of transformers v4.44, default chat template is no longer allowed, so you must provide a chat template if the tokenizer does not define one.`
+
+**Workaround (landed in [PR #21](https://github.com/ioannis-n-melas/coder-agent-poc/pull/21)):** after `snapshot_download`, `fetch_weights.py` also pulls `tokenizer_config.json` from the official `Qwen/Qwen3-Coder-30B-A3B-Instruct` repo and overlays its `chat_template` onto the baked weight dir. The overlay source is configurable via `TEMPLATE_HF_REPO` and is a no-op if a future AWQ rebuild restores the field. This keeps the template coupled to the weight dir — one source of truth at runtime.
+
+**Trigger to revisit:** (a) a community or official AWQ repo appears that ships the template inline — the overlay becomes dead code and can be removed, or (b) we outgrow the community AWQ repo entirely (quality, maintenance, licensing) and need to requantize ourselves — at which point a new ADR selects the replacement upstream.
+
 ## References
 
 - [ADR-0008 — Qwen2.5-Coder-1.5B-Instruct as POC model](0008-qwen25-coder-15b-model.md) (superseded by this ADR)
@@ -59,4 +73,5 @@ Specifics:
 - [ADR-0011 — Cloud Run with NVIDIA L4 GPU for MVP serving](0011-cloud-run-l4-gpu.md)
 - [ADR-0012 — Re-introduce DeepAgents as agent framework](0012-reintroduce-deepagents.md)
 - [Qwen3-Coder model page (HuggingFace)](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct)
+- [cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit (community AWQ build)](https://huggingface.co/cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit)
 - [AWQ quantization — AutoAWQ](https://github.com/castor-ai/AutoAWQ)
