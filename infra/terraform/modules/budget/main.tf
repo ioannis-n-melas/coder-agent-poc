@@ -1,6 +1,16 @@
 variable "project_id" { type = string }
 variable "billing_account_id" { type = string }
-variable "monthly_budget_usd" { type = number }
+variable "monthly_budget_usd" {
+  # Misnomer kept for backwards compat — the value is interpreted in
+  # var.currency_code (default GBP to match the billing account's own
+  # currency; GCP rejects cross-currency budget specs with a 400).
+  type = number
+}
+variable "currency_code" {
+  type        = string
+  default     = "GBP"
+  description = "ISO 4217 currency for the budget amount. Must match the billing account's currency — GCP rejects mismatches with BadRequestException."
+}
 variable "alert_emails" { type = list(string) }
 
 resource "google_monitoring_notification_channel" "email" {
@@ -24,7 +34,7 @@ resource "google_billing_budget" "budget" {
 
   amount {
     specified_amount {
-      currency_code = "USD"
+      currency_code = var.currency_code
       units         = var.monthly_budget_usd
     }
   }

@@ -72,6 +72,14 @@ module "model_server" {
     # (ADR-0013). Default 32768 -- reduce to 16384 or 24576 if KV cache
     # exceeds VRAM headroom.
     MAX_MODEL_LEN = "32768"
+    # The cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit repo (ADR-0013) stores
+    # its AWQ int4 weights under the compressed-tensors container format; its
+    # config.json declares quantization_method=compressed-tensors. vLLM refuses
+    # to start if the --quantization arg doesn't match that declaration, so we
+    # override the entrypoint.sh default (awq_marlin). compressed-tensors still
+    # routes W4A16 weights to the Marlin kernel on SM89+ — no perf loss.
+    # Flip back to awq_marlin if we ever switch to a plain-AWQ repo.
+    QUANTIZATION = "compressed-tensors"
   }
 
   # Only the coder-agent SA can invoke (CLAUDE.md s3.4 -- no allUsers without ADR).
